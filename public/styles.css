@@ -1,0 +1,41 @@
+/* Legible from 3 meters — that's the whole design brief. */
+* { box-sizing: border-box; margin: 0; }
+body {
+  font-family: system-ui, sans-serif;
+  background: #0b1220; color: #e8eefc;
+  display: flex; flex-direction: column; height: 100dvh;
+}
+#strip {
+  display: flex; gap: 12px; align-items: center;
+  padding: 10px 14px; background: #101a30; font-size: 13px;
+}
+.pill { padding: 3px 10px; border-radius: 999px; font-weight: 700; }
+.pill.online { background: #123f24; color: #6ef0a0; }
+.pill.offline { background: #47121a; color: #ff8fa0; }
+.id { opacity: .75; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 38vw; }
+
+main { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+#card {
+  background: #16233f; border: 1px solid #27406f; border-radius: 16px; padding: 20px;
+}
+#instruction { font-size: 26px; font-weight: 700; line-height: 1.25; }
+#freshness { margin-top: 8px; font-size: 14px; color: #8fb4ff; }
+#question { margin-top: 8px; font-size: 16px; color: #b9c6e4; font-style: italic; }
+#confirmBtn {
+  margin-top: 14px; width: 100%; padding: 16px; font-size: 20px; font-weight: 800;
+  background: #2563eb; color: white; border: 0; border-radius: 12px;
+}
+
+#feed { display: flex; flex-direction: column; gap: 8px; }
+.evt { background: #101a30; border-radius: 10px; padding: 10px 12px; font-size: 15px; }
+.evt .src { font-size: 11px; font-weight: 700; opacity: .6; text-transform: uppercase; }
+.evt .ja { opacity: .55; font-size: 13px; }
+
+footer {
+  display: flex; gap: 8px; align-items: center; padding: 10px 14px 18px; background: #101a30;
+}
+.btn { background: #1f2f52; color: #e8eefc; border: 0; border-radius: 10px; padding: 12px 14px; font-size: 15px; }
+#askInput { flex: 1; padding: 12px; border-radius: 10px; border: 1px solid #27406f; background: #0b1220; color: #e8eefc; }
+#demoControls summary { list-style: none; opacity: .4; font-size: 12px; padding: 6px; }
+#demoControls button { display: block; margin-top: 6px; }
+body.offline #card { border-color: #a33; }

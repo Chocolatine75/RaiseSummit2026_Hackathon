@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>AEGIS</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="stylesheet" href="/styles.css" />
+  <meta name="theme-color" content="#0b1220" />
+</head>
+<body>
+  <!-- Status strip: the proof-of-primitive on camera. Judges see the IDs. -->
+  <header id="strip">
+    <span id="net" class="pill online">ONLINE</span>
+    <span class="id">itx: <b id="chainId">—</b></span>
+    <span class="id">env: <b id="envId">—</b></span>
+  </header>
+
+  <!-- The one big instruction card -->
+  <main>
+    <section id="card">
+      <p id="instruction">Waiting for the world…</p>
+      <p id="freshness"></p>
+      <p id="question"></p>
+      <button id="confirmBtn" hidden>✓ Confirm</button>
+    </section>
+
+    <!-- Feed of everything the agents learned -->
+    <section id="feed"></section>
+  </main>
+
+  <!-- Controls: camera capture (Eyes), ask (offline voice/typing), demo triggers -->
+  <footer>
+    <label class="btn" for="camInput">📷 Read sign</label>
+    <input id="camInput" type="file" accept="image/*" capture="environment" hidden />
+    <input id="askInput" placeholder="Ask AEGIS…" />
+    <button id="askBtn" class="btn">Ask</button>
+    <details id="demoControls">
+      <summary>demo</summary>
+      <button data-demo="quake">🌏 Quake</button>
+      <button data-demo="reset">↺ Reset</button>
+      <button data-demo="offline">✈ Simulate offline</button>
+    </details>
+  </footer>
+
+  <!-- MediaPipe GenAI bundle (offline LLM). The service worker caches this +
+       the wasm + the model file, so it all works in airplane mode.
+       Verified usage: developers.google.com/edge/mediapipe/solutions/genai/llm_inference/web_js -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-genai/genai_bundle.cjs" crossorigin="anonymous"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

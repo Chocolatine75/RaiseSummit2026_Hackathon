@@ -1,0 +1,9 @@
+node_modules/
+.dev.vars
+.env
+public/models/*.task
+public/models/*.litertlm
+workers/scout/scout-state.json
+.wrangler/
+*.pcm
+*.mp3

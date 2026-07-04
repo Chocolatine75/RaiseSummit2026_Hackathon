@@ -1,0 +1,9 @@
+{
+  "name": "aegis-workers",
+  "private": true,
+  "type": "module",
+  "description": "Listener (Live Translate) + Scout (Antigravity) — run with `node <script>` from this folder.",
+  "dependencies": {
+    "@google/genai": "^2.3.0"
+  }
+}

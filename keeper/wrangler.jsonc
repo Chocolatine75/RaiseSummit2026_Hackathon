@@ -1,0 +1,21 @@
+{
+  // AEGIS Keeper — Cloudflare Worker + Durable Object.
+  // Deploy:  cd keeper && npm install && npx wrangler deploy
+  // Secret:  npx wrangler secret put GEMINI_API_KEY   (paste your AI Studio key)
+  // Local:   echo 'GEMINI_API_KEY=...' > .dev.vars && npx wrangler dev
+  "name": "aegis-keeper",
+  "main": "src/index.js",
+  "compatibility_date": "2026-06-01",
+
+  // The client PWA and staged pages are served from the same Worker —
+  // one deploy gives you app + fake portals on one URL.
+  "assets": {
+    "directory": "../public",
+    "binding": "ASSETS"
+  },
+
+  "durable_objects": {
+    "bindings": [{ "name": "SESSION_DO", "class_name": "SessionDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SessionDO"] }]
+}

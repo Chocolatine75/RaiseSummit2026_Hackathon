@@ -1,0 +1,10 @@
+{
+  "comment": "Static fallback dataset — pre-loaded into the demo narration if the Scout is down. Mirrors staged/shelters.html.",
+  "shelters": [
+    { "name": "Shinjuku Chuo Park", "dist_m": 600, "step_free": true, "capacity": "open" },
+    { "name": "Shinjuku Elementary School", "dist_m": 450, "step_free": false, "capacity": "open" },
+    { "name": "Yoyogi Community Hall", "dist_m": 1200, "step_free": true, "capacity": "full" },
+    { "name": "Okubo Sports Center", "dist_m": 900, "step_free": true, "capacity": "open" },
+    { "name": "Kabukicho Annex", "dist_m": 500, "step_free": false, "capacity": "full" }
+  ]
+}
