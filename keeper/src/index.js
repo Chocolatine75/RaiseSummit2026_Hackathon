@@ -23,7 +23,7 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (["/ws", "/event", "/api/eyes", "/api/reset", "/api/state"].includes(url.pathname)) {
+    if (["/ws", "/event", "/api/eyes", "/api/reset", "/api/state", "/api/gemma", "/api/voice"].includes(url.pathname)) {
       const session = url.searchParams.get("session") || "demo";
       const stub = env.SESSION_DO.get(env.SESSION_DO.idFromName(session));
       return stub.fetch(request);
@@ -74,6 +74,8 @@ export class SessionDO {
         return json({ ok: true });
       }
       case "/api/state": return json(await this.situation());
+      case "/api/gemma": return this.handleGemma(await request.json());
+      case "/api/voice": return this.handleVoice(await request.json());
       default: return new Response("not found", { status: 404 });
     }
   }
@@ -238,6 +240,80 @@ export class SessionDO {
     const sign = parseJsonLoose(data.candidates?.[0]?.content?.parts?.[0]?.text || "");
     if (!sign?.en) return json({ ok: false, error: "no text found in image" }, 422);
     return this.handleEvent({ type: "sign_read", payload: sign, src: "eyes" });
+  }
+
+  // ---------- Gemma offline mode (Cloudflare Workers AI) ----------
+  async handleGemma({ question, vault_context }) {
+    const sit = await this.situation();
+    const systemPrompt = [
+      `Tu es AEGIS, assistant de crise. Tu guides ${sit.user.name} à ${sit.country_context?.city ?? "Tokyo"}.`,
+      `Réponds en ${sit.user.language === "fr" ? "français" : "anglais"}, de façon concise.`,
+      `Contraintes utilisateur : ${sit.user.constraints.join(", ")}.`,
+      `Instruction courante : ${sit.guidance.current_instruction_en ?? "aucune"}.`,
+      "",
+      "DONNÉES DU VAULT LOCAL :",
+      vault_context || "(aucune donnée disponible)",
+    ].join("\n");
+
+    try {
+      const result = await this.env.AI.run("@cf/google/gemma-7b-it", {
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: question || "Que dois-je faire maintenant ?" },
+        ],
+        max_tokens: 256,
+      });
+      return json({ response: result.response });
+    } catch (err) {
+      return json({ response: sit.guidance.current_instruction_en ?? "Consultez le vault pour les informations d'urgence." });
+    }
+  }
+
+  // ---------- Voice: transcribe audio + generate response via Gemini ----------
+  async handleVoice({ audio_b64, mime_type = "image/jpeg" }) {
+    const sit = await this.situation();
+    const GEMINI_BASE = `https://generativelanguage.googleapis.com/v1beta`;
+
+    const vaultLines = [
+      ...(sit.live_delta.shelters.slice(0, 3).map(s => `Shelter: ${s.name}, ${s.dist_m}m, step_free:${s.step_free}`)),
+      sit.country_context?.embassy ? `Embassy: ${sit.country_context.embassy.address}, urgences: ${sit.country_context.embassy.emergency_line}` : null,
+      ...Object.entries(sit.country_context?.emergency_numbers ?? {}).map(([k, v]) => `${k}: ${v}`),
+      ...(sit.active_alerts.slice(0, 2).map(a => `Alert ${a.source}: ${a.message}`)),
+      sit.guidance.current_instruction_en ? `Instruction: ${sit.guidance.current_instruction_en}` : null,
+    ].filter(Boolean).join("\n");
+
+    const prompt = [
+      `Tu es AEGIS, assistant de crise pour ${sit.user.name} à ${sit.country_context?.city ?? "Tokyo"}.`,
+      `Réponds en ${sit.user.language === "fr" ? "français" : "anglais"}, brièvement.`,
+      `Contraintes: ${sit.user.constraints.join(", ")}.`,
+      `Vault:\n${vaultLines}`,
+      `Transcris d'abord la question audio, puis réponds. Format JSON: {"transcript":"...","response":"..."}`,
+    ].join("\n");
+
+    try {
+      const res = await fetch(`${GEMINI_BASE}/models/gemini-2.5-flash:generateContent?key=${this.env.GEMINI_API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: prompt },
+              { inline_data: { mime_type: mime_type === "audio/m4a" ? "audio/mp4" : mime_type, data: audio_b64 } },
+            ],
+          }],
+          generationConfig: { responseMimeType: "application/json" },
+        }),
+      });
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+      const parsed = parseJsonLoose(text) ?? {};
+      return json({
+        transcript: parsed.transcript ?? "",
+        response: parsed.response ?? sit.guidance.current_instruction_en ?? "",
+      });
+    } catch {
+      return json({ transcript: "", response: sit.guidance.current_instruction_en ?? "" });
+    }
   }
 }
 

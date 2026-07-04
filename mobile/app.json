@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "AEGIS",
+    "slug": "aegis-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "aegis",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0A0A0A"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.aegis.mobile",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "AEGIS utilise le micro pour que vous parliez à l'IA.",
+        "NSSpeechRecognitionUsageDescription": "AEGIS utilise la reconnaissance vocale pour comprendre vos questions."
+      }
+    },
+    "android": {
+      "package": "com.aegis.mobile",
+      "permissions": [
+        "RECORD_AUDIO",
+        "ACCESS_FINE_LOCATION",
+        "INTERNET"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "AEGIS utilise le micro pour que vous parliez à l'IA."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

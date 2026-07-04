@@ -18,5 +18,6 @@
   "durable_objects": {
     "bindings": [{ "name": "SESSION_DO", "class_name": "SessionDO" }]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SessionDO"] }]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SessionDO"] }],
+  "ai": { "binding": "AI" }
 }
