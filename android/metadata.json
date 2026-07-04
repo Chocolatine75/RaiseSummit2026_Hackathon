@@ -1,6 +1,0 @@
-{
-  "name": "AEGIS",
-  "description": "Survival AI companion for crises abroad, featuring real-time Gemini guidance and secure offline fallback.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
