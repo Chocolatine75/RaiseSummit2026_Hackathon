@@ -152,6 +152,7 @@ export async function cycle() {
         state.alert.interaction_id = r.interaction_id;
         state.alert.environment_id = r.environment_id;
         verified.merged.exits_down = r.data?.exits_down ?? verified.merged.exits_down;
+        verified.merged.official_evac_direction = r.data?.official_evac_direction ?? verified.merged.official_evac_direction;
         verified.merged.active_alerts = r.data?.active_alerts ?? verified.merged.active_alerts;
       }
     } catch (err) {
