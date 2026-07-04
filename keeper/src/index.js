@@ -47,6 +47,8 @@ function freshState() {
     event: { type: null, magnitude_reported: null, t0: null },
     environment: [], // translated PA lines + sign readings, newest last
     live_delta: { exits_down: [], official_evac_direction: null, shelters: [], as_of: null },
+    country_context: null,   // filled by Scout's country agent on first cycle
+    active_alerts: [],        // filled by Scout's alert agent each cycle
     guidance: { current_instruction_en: null, next_question: null, needs_tap: false, confirmed: false },
     network: { online: true, last_serialized_to_device: null },
   };
@@ -135,6 +137,8 @@ export class SessionDO {
         if (p.shelters) s.live_delta.shelters = p.shelters;
         s.live_delta.as_of = t;
         if (p.environment_id) s.scout_environment_id = p.environment_id;
+        if (p.country_context) s.country_context = p.country_context;
+        if (p.active_alerts) s.active_alerts = p.active_alerts;
         needsReasoning = true;
         break;
       }
@@ -163,6 +167,8 @@ export class SessionDO {
       `You are AEGIS, guiding ${s.user.name} through a live emergency. ` +
       `Her constraints: ${s.user.constraints.join(", ")}. Location: ${JSON.stringify(s.user.location)}.\n` +
       `Current situation JSON:\n${JSON.stringify(s)}\n\n` +
+      `${s.country_context ? `\nCountry context (embassy, protocols): ${JSON.stringify(s.country_context)}` : ""}` +
+      `${s.active_alerts?.length ? `\nActive alerts: ${JSON.stringify(s.active_alerts)}` : ""}` +
       `Latest development is the last entry of "environment" or the "live_delta". ` +
       `Respond ONLY with JSON: {"surface_now": boolean, "plain_line_en": string, ` +
       `"next_question": string, "needs_tap": boolean}. ` +
