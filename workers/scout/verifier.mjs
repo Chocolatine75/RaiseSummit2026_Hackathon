@@ -65,10 +65,14 @@ export async function runVerifier({ country, shelter, alert, constraints }) {
     return { verdict: "ok", gaps: [], merged: buildMerged(countryData, shelterData, alertData) };
   }
 
-  const raw = await res.json();
-  const text = raw.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  const check = parseJsonLoose(text) ?? { verdict: "ok", gaps: [] };
-
+  let check = { verdict: "ok", gaps: [] };
+  try {
+    const raw = await res.json();
+    const text = raw.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    check = parseJsonLoose(text) ?? { verdict: "ok", gaps: [] };
+  } catch (err) {
+    console.error(`verifier json parse error — skipping semantic check: ${err.message}`);
+  }
   return {
     verdict: check.verdict || "ok",
     gaps: check.gaps || [],
