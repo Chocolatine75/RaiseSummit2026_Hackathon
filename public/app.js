@@ -41,6 +41,40 @@ state = readCache();
 initMap();
 render();
 connect();
+startGeolocation(); // use the phone's REAL position, not a constant
+
+// ---------- real GPS: the app follows where the user actually is ----------
+let lastSentLL = null, heading = null;
+function startGeolocation() {
+  if (!navigator.geolocation) { sysLog("No GPS on this device — using station default."); return; }
+  navigator.geolocation.watchPosition(
+    (pos) => {
+      const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+      if (pos.coords.heading != null && !Number.isNaN(pos.coords.heading)) heading = pos.coords.heading;
+      // Debounce: only tell the Keeper when we've meaningfully moved (>15m).
+      if (lastSentLL && distM(lastSentLL, { lat, lng }) < 15) { updateUserMarker(lat, lng); return; }
+      lastSentLL = { lat, lng };
+      emit("set_location", { lat, lng, accuracy_m: Math.round(accuracy) });
+      updateUserMarker(lat, lng);
+    },
+    (err) => sysLog(`GPS: ${err.message} — using station default.`),
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+  );
+}
+function updateUserMarker(lat, lng) {
+  if (userMarker) userMarker.setLatLng([lat, lng]);
+}
+function distM(a, b) {
+  const R = 6371000, dLat = ((b.lat - a.lat) * Math.PI) / 180, dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+function bearing(a, b) {
+  const y = Math.sin(((b.lng - a.lng) * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180);
+  const x = Math.cos((a.lat * Math.PI) / 180) * Math.sin((b.lat * Math.PI) / 180) -
+    Math.sin((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.cos(((b.lng - a.lng) * Math.PI) / 180);
+  return (Math.atan2(y, x) * 180) / Math.PI;
+}
 
 // ---------- online: WebSocket to the Keeper ----------
 function connect() {
@@ -65,11 +99,8 @@ function setOffline(v) {
   if (offline === v) return;
   offline = v;
   document.body.classList.toggle("offline", v);
-  const mode = document.getElementById("mode");
-  mode.className = `mode ${v ? "offline" : "online"}`;
-  document.getElementById("modeLabel").textContent = v ? "OFFLINE" : "ONLINE";
-  document.getElementById("engine").textContent = v
-    ? "Gemma 4 E2B · on-device" : "Gemini 3.5 Flash · cloud";
+  const pill = document.getElementById("statusPill");
+  pill.className = `pill ${v ? "offline" : "online"}`;
   if (v && state) {
     speak("We're offline now. I still have your situation. Ask me anything.");
     ensureLlm();
@@ -91,9 +122,10 @@ function initMap() {
   map = L.map("map", { zoomControl: false, attributionControl: false })
     .setView([st.lat, st.lng], 16);
   L.tileLayer(TILE_URL, { maxZoom: 18 }).addTo(map);
+  // Real "blue dot" GPS marker, like a native maps app.
   userMarker = L.marker([st.lat, st.lng], {
-    icon: L.divIcon({ className: "user-pin", html: "📍", iconSize: [24, 24] }),
-  }).addTo(map).bindPopup(`Maria — ${st.name}`);
+    icon: L.divIcon({ className: "user-pin", html: '<div class="core"></div>', iconSize: [18, 18] }),
+  }).addTo(map);
   shelterLayer = L.layerGroup().addTo(map);
 }
 
@@ -102,26 +134,29 @@ function renderMap() {
   const st = station();
   userMarker.setLatLng([st.lat, st.lng]);
   shelterLayer.clearLayers();
-  let best = null, bestLL = null;
   (state.live_delta.shelters || []).forEach((sh) => {
-    if (sh.lat == null || sh.lng == null) return; // no coords in data → not on map
-    const ll = [sh.lat, sh.lng];
+    if (sh.lat == null || sh.lng == null) return;
     const open = sh.capacity === "open";
-    L.marker(ll, {
+    L.marker([sh.lat, sh.lng], {
       icon: L.divIcon({
         className: `shelter-pin ${open ? "" : "full"}`,
         html: open ? "🟢" : "⛔", iconSize: [22, 22],
       }),
     }).addTo(shelterLayer)
       .bindPopup(`<b>${sh.name}</b><br>${sh.dist_m}m · ${sh.step_free ? "step-free ✓" : "stairs"} · ${sh.capacity.toUpperCase()}`);
-    // Best = open + step-free (Maria can't take stairs) + nearest.
-    if (open && sh.step_free && (!best || sh.dist_m < best.dist_m)) { best = sh; bestLL = ll; }
   });
+
+  // Real walking route (OSRM street polyline from the Keeper) — not a straight line.
   if (routeLine) routeLine.remove();
-  if (bestLL) {
-    routeLine = L.polyline([[st.lat, st.lng], bestLL], {
-      color: "#00b36b", weight: 5, dashArray: "10 8", opacity: 0.9,
-    }).addTo(map).bindPopup(`Direction line → ${best.name}`);
+  const r = state.route;
+  if (r?.coords?.length) {
+    routeLine = L.polyline(r.coords, {
+      color: "#12d18e", weight: 7, opacity: 0.95, lineJoin: "round", lineCap: "round",
+    }).addTo(map).bindPopup(`Route → ${r.target}`);
+    // Casing under the route (nav-app look): a dark stroke behind the green.
+    L.polyline(r.coords, { color: "#052b1e", weight: 11, opacity: 0.6, lineJoin: "round" })
+      .addTo(shelterLayer).bringToBack();
+    try { map.fitBounds(routeLine.getBounds().pad(0.28)); } catch {}
   }
 }
 
@@ -130,8 +165,8 @@ function renderMap() {
 async function downloadMapPack() {
   packDone = true;
   const st = station();
-  const badge = document.getElementById("mapBadge");
-  badge.hidden = false;
+  const toast = document.getElementById("toast");
+  toast.hidden = false;
   const cache = await caches.open("aegis-tiles");
   const jobs = [];
   for (const z of [14, 15, 16]) {
@@ -145,10 +180,11 @@ async function downloadMapPack() {
   await Promise.allSettled(jobs.map(async (u) => {
     const res = await fetch(u, { mode: "cors" });
     if (res.ok) await cache.put(u, res);
-    document.getElementById("tileCount").textContent = `${++done}/${jobs.length}`;
+    toast.textContent = `⬇ Saving map for offline · ${++done}/${jobs.length}`;
   }));
-  badge.hidden = true;
-  sysLog(`Map pack cached — ${done} tiles around ${st.name}. Map works offline now.`);
+  toast.textContent = "✓ Map saved — works without signal";
+  setTimeout(() => { toast.hidden = true; }, 2500);
+  sysLog(`Map pack cached — ${done} tiles around ${st.name}.`);
 }
 function latLngToTile(lat, lng, z) {
   const n = 2 ** z;
@@ -158,7 +194,8 @@ function latLngToTile(lat, lng, z) {
   };
 }
 
-// ---------- camera (live stream; SCAN grabs a frame for the Eyes) ----------
+// ---------- camera (live stream; SCAN reads signs; AR arrow points to shelter) ----------
+let compassDeg = null;
 async function startCam() {
   if (camStreamHandle) return;
   try {
@@ -167,6 +204,38 @@ async function startCam() {
     });
     document.getElementById("camStream").srcObject = camStreamHandle;
   } catch { document.getElementById("camHint").textContent = "Camera permission needed"; }
+  startCompass();
+}
+
+// Real compass: iOS needs a permission request; Android fires deviceorientation.
+async function startCompass() {
+  const handler = (e) => {
+    const deg = e.webkitCompassHeading ?? (e.alpha != null ? 360 - e.alpha : null);
+    if (deg != null) { compassDeg = deg; updateAR(); }
+  };
+  if (typeof DeviceOrientationEvent?.requestPermission === "function") {
+    try { if ((await DeviceOrientationEvent.requestPermission()) === "granted")
+      window.addEventListener("deviceorientationabsolute", handler, true) ||
+      window.addEventListener("deviceorientation", handler, true); } catch {}
+  } else {
+    window.addEventListener("deviceorientationabsolute", handler, true);
+    window.addEventListener("deviceorientation", handler, true);
+  }
+}
+
+// Rotate the AR arrow so it points at the shelter relative to where the phone faces.
+function updateAR() {
+  const overlay = document.getElementById("arOverlay");
+  const r = state?.route, st = station();
+  if (!r?.coords?.length || compassDeg == null) { overlay.hidden = true; return; }
+  const targetLL = r.coords[r.coords.length - 1];
+  const brg = bearing({ lat: st.lat, lng: st.lng }, { lat: targetLL[0], lng: targetLL[1] });
+  const rel = ((brg - compassDeg) % 360 + 360) % 360; // 0 = straight ahead
+  overlay.hidden = false;
+  document.getElementById("arArrow").style.transform = `rotate(${rel}deg)`;
+  const dist = Math.round(distM({ lat: st.lat, lng: st.lng }, { lat: targetLL[0], lng: targetLL[1] }));
+  const dir = rel < 30 || rel > 330 ? "straight ahead" : rel < 180 ? "to your right" : "to your left";
+  document.getElementById("arLabel").textContent = `${r.target} · ${dist}m · ${dir}`;
 }
 function stopCam() {
   camStreamHandle?.getTracks().forEach((t) => t.stop());
@@ -174,18 +243,19 @@ function stopCam() {
 }
 document.getElementById("scanBtn").onclick = async () => {
   const video = document.getElementById("camStream");
+  const label = document.querySelector("#scanBtn span");
   if (!video.videoWidth) return;
   const canvas = document.createElement("canvas");
   canvas.width = video.videoWidth; canvas.height = video.videoHeight;
   canvas.getContext("2d").drawImage(video, 0, 0);
   const image_b64 = canvas.toDataURL("image/jpeg", 0.8).split(",")[1];
-  document.getElementById("camHint").textContent = "Reading…";
+  label.textContent = "Reading…";
   const res = await fetch(`/api/eyes?session=${SESSION}`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ image_b64, mime_type: "image/jpeg" }),
   }).catch(() => null);
-  document.getElementById("camHint").textContent =
-    res?.ok ? "Sign read ✓ — see instruction below" : "Couldn't read that — try closer";
+  label.textContent = res?.ok ? "Sign read ✓" : "Try closer";
+  setTimeout(() => { label.textContent = "Scan a sign"; }, 2000);
 };
 
 // ---------- view switching ----------
@@ -201,39 +271,54 @@ document.getElementById("tabMap").onclick = () => switchView("map");
 document.getElementById("tabCam").onclick = () => switchView("cam");
 
 // ---------- render ----------
+function setText(id, txt) { const el = document.getElementById(id); if (el) el.textContent = txt; }
+
 function render() {
   if (!state) return;
-  document.getElementById("chainId").textContent = shorten(state.interaction_chain_id);
-  document.getElementById("envId").textContent = shorten(state.scout_environment_id);
-  // Live latency readout: how long the cloud brain took on the last event.
-  if (!offline && state.timing?.last_reason_ms) {
-    document.getElementById("engine").textContent =
-      `Gemini 3.5 Flash · cloud · ${(state.timing.last_reason_ms / 1000).toFixed(1)}s`;
-  }
 
+  // Status pill: one calm word for a scared user.
   const g = state.guidance || {};
+  const evt = state.event?.type === "earthquake";
+  setText("statusText", offline ? "Offline · on-device" : evt ? "Guiding you" : "Monitoring");
+
+  // The one instruction.
   if (g.current_instruction_en) {
-    document.getElementById("instruction").textContent = g.current_instruction_en;
+    setText("instruction", g.current_instruction_en);
     if (!offline && g.current_instruction_en !== spokenInstruction) {
       spokenInstruction = g.current_instruction_en;
       speak(g.current_instruction_en);
     }
   }
-  document.getElementById("question").textContent = g.next_question || "";
-  document.getElementById("freshness").textContent = state.live_delta?.as_of
-    ? `live data · ${age(state.live_delta.as_of)} old` : "";
+  setText("question", g.next_question || "");
+  setText("freshness", state.live_delta?.as_of ? `Live · updated ${age(state.live_delta.as_of)} ago` : "");
   document.getElementById("confirmBtn").hidden = !g.needs_tap;
 
-  // QA badge: the harness checking itself (Keeper invariants + Auditor agent)
-  const qa = document.getElementById("qa");
+  // Route banner: real ETA, like a navigation app.
+  const banner = document.getElementById("routeBanner");
+  const r = state.route;
+  if (r?.coords?.length) {
+    banner.hidden = false;
+    setText("rbTime", `${Math.max(1, Math.round(r.duration_s / 60))} min`);
+    setText("rbDist", `· ${r.distance_m} m`);
+    setText("rbTarget", r.target);
+    setText("rbStep", r.first_step ? `via ${r.first_step}` : "");
+  } else {
+    banner.hidden = true;
+  }
+
+  // Proof panel (tucked away): the harness truth for judges.
+  setText("pxEngine", offline ? "Gemma 4 E2B (device)" : "Gemini 3.5 Flash");
+  setText("pxLatency", state.timing?.last_reason_ms ? `${(state.timing.last_reason_ms / 1000).toFixed(1)}s` : "—");
+  setProof("pxChain", state.interaction_chain_id ? shorten(state.interaction_chain_id) : "—", !!state.interaction_chain_id);
+  setProof("pxEnv", state.scout_environment_id ? shorten(state.scout_environment_id) : "—", !!state.scout_environment_id);
   const a = state.audit;
   if (a && a.status !== "idle") {
-    qa.className = `qa ${a.status}`;
-    qa.textContent = `QA ${a.status === "pass" ? "✓" : "⚠"} ${a.source === "auditor-agent" ? "agent" : "auto"}`;
-    for (const c of (a.checks || []).filter((c) => !c.ok)) {
+    setProof("pxQA", `${a.status.toUpperCase()} · ${a.source === "auditor-agent" ? "agent" : "auto"}`, a.status === "pass");
+    for (const c of (a.checks || []).filter((c) => !c.ok))
       if (!localLog.includes(`QA: ${c.note}`)) localLog.push(`QA: ${c.note}`);
-    }
   }
+  const loc = state.user?.location;
+  setProof("pxGps", loc?.source === "device_gps" ? `GPS ±${loc.accuracy_m ?? "?"}m` : "default", loc?.source === "device_gps");
 
   const feed = document.getElementById("feed");
   feed.innerHTML = "";
@@ -245,11 +330,17 @@ function render() {
   for (const e of [...(state.environment || [])].reverse().slice(0, 15)) {
     const d = document.createElement("div");
     d.className = "evt";
-    d.innerHTML = `<span class="src">${e.src}</span>${esc(e.en || "")}` +
+    d.innerHTML = `<span class="src">${esc(e.src)}</span>${esc(e.en || "")}` +
       (e.ja ? `<div class="ja">${esc(e.ja)}</div>` : "");
     feed.appendChild(d);
   }
   renderMap();
+}
+function setProof(id, txt, ok) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = txt;
+  el.className = ok ? "ok" : (txt === "—" || txt === "default" ? "" : "warn");
 }
 function sysLog(line) { localLog.push(line); render(); }
 
@@ -260,9 +351,14 @@ function emit(type, payload = {}) {
   else fetch(`/event?session=${SESSION}`, { method: "POST", body: JSON.stringify(event) }).catch(() => {});
 }
 document.getElementById("confirmBtn").onclick = () => emit("user_tap");
-document.getElementById("askBtn").onclick = ask;
 document.getElementById("askInput").onkeydown = (e) => { if (e.key === "Enter") ask(); };
-document.getElementById("voiceBtn").onclick = () => unlockVoice(true);
+// Mic button: unlock voice + start speech recognition (real spoken questions).
+document.getElementById("micBtn").onclick = () => { unlockVoice(true); startDictation(); };
+// Info button opens the proof panel.
+document.getElementById("proofBtn").onclick = () => {
+  const p = document.getElementById("proofPanel"); p.open = !p.open;
+  if (p.open) p.scrollIntoView({ behavior: "smooth" });
+};
 async function ask() {
   const input = document.getElementById("askInput");
   const text = input.value.trim();
@@ -271,12 +367,28 @@ async function ask() {
   if (!offline) return emit("user_utterance", { text });
   await askGemma(text); // offline: the on-device brain answers
 }
-document.querySelectorAll("#demoControls button").forEach((b) => {
+// Real voice input via Web Speech API.
+function startDictation() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return;
+  const rec = new SR();
+  rec.lang = "en-US"; rec.interimResults = false; rec.maxAlternatives = 1;
+  const btn = document.getElementById("micBtn");
+  btn.classList.add("live");
+  rec.onresult = (e) => {
+    const text = e.results[0][0].transcript;
+    document.getElementById("askInput").value = text;
+    ask();
+  };
+  rec.onend = () => btn.classList.remove("live");
+  rec.onerror = () => btn.classList.remove("live");
+  try { rec.start(); } catch {}
+}
+document.querySelectorAll("#demoRow button").forEach((b) => {
   b.onclick = () => {
     const a = b.dataset.demo;
     if (a === "quake") emit("quake", { magnitude: "5+" });
-    if (a === "pack") { packDone = false; downloadMapPack(); }
-    if (a === "reset") { localLog.length = 0; fetch(`/api/reset?session=${SESSION}`, { method: "POST" }); }
+    if (a === "reset") { localLog.length = 0; spokenInstruction = ""; fetch(`/api/reset?session=${SESSION}`, { method: "POST" }); }
     if (a === "offline") { try { ws.close(); } catch {} setOffline(true); }
   };
 });
@@ -342,19 +454,18 @@ document.addEventListener("pointerdown", function unlock() {
 }, { once: true });
 
 function unlockVoice(test) {
-  const btn = document.getElementById("voiceBtn");
+  const btn = document.getElementById("micBtn");
   if (!speech) {
-    btn.className = "warn";
-    btn.textContent = "NO TTS";
-    sysLog("Voice unavailable in this browser; use large text + narration fallback.");
+    sysLog("Voice unavailable in this browser; large text + narration fallback in use.");
     return;
   }
-  voiceUnlocked = true;
-  try { speech.resume(); } catch {}
-  btn.className = "ready";
-  btn.textContent = chosenVoice ? "VOICE OK" : "VOICE ON";
-  if (pendingSpeech) { const t = pendingSpeech; pendingSpeech = null; speak(t); }
-  else if (test) speak("Voice is ready. AEGIS will speak guidance out loud.");
+  if (!voiceUnlocked) {
+    voiceUnlocked = true;
+    try { speech.resume(); } catch {}
+    btn?.classList.add("ready");
+    if (pendingSpeech) { const t = pendingSpeech; pendingSpeech = null; speak(t); }
+    else if (test) speak("Voice is ready. I'll speak your guidance out loud.");
+  }
 }
 
 function speak(text) {

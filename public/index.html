@@ -5,78 +5,88 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
   <title>AEGIS</title>
   <link rel="manifest" href="/manifest.json" />
-  <!-- Leaflet (cached by the service worker → works in airplane mode) -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.css" crossorigin="anonymous" />
   <link rel="stylesheet" href="/styles.css" />
   <meta name="theme-color" content="#0a0e12" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 </head>
 <body>
-  <!-- Engine strip: WHICH BRAIN IS DRIVING, visible at all times (the judges' proof) -->
-  <header id="strip">
-    <div id="mode" class="mode online">
-      <span class="dot"></span>
-      <span id="modeLabel">ONLINE</span>
-      <span id="engine">Gemini 3.5 Flash · cloud</span>
+  <!-- Full-bleed map/camera is the app. Everything floats over it. -->
+  <div id="mapView" class="view active">
+    <div id="map"></div>
+  </div>
+
+  <div id="camView" class="view">
+    <video id="camStream" autoplay playsinline muted></video>
+    <div id="arOverlay" hidden>
+      <div id="arArrow">↑</div>
+      <div id="arLabel"></div>
     </div>
-    <div class="ids">
-      <span>itx <b id="chainId">—</b></span>
-      <span>env <b id="envId">—</b></span>
-      <span id="qa" class="qa">QA —</span>
+    <button id="scanBtn"><span>Scan a sign</span></button>
+  </div>
+
+  <!-- Floating status pill (top): calm, one glanceable truth -->
+  <div id="statusPill" class="pill online">
+    <span class="dot"></span>
+    <span id="statusText">Monitoring</span>
+    <button id="proofBtn" aria-label="System details">ⓘ</button>
+  </div>
+
+  <!-- Map-pack progress toast -->
+  <div id="toast" hidden></div>
+
+  <!-- Route banner (nav-app style): shows when a route exists -->
+  <div id="routeBanner" hidden>
+    <div class="rb-icon">🧭</div>
+    <div class="rb-body">
+      <div class="rb-eta"><b id="rbTime">—</b> <span id="rbDist">—</span></div>
+      <div class="rb-to">to <b id="rbTarget">—</b></div>
     </div>
-  </header>
+    <div class="rb-step" id="rbStep"></div>
+  </div>
 
-  <!-- Main viewport: map or camera, toggled by the bottom bar -->
-  <main>
-    <section id="mapView" class="view active">
-      <div id="map"></div>
-      <div id="mapBadge" hidden>⬇ caching map pack… <b id="tileCount"></b></div>
-      <div id="mapCredit">© OpenStreetMap · shelters: Google Maps grounding</div>
-    </section>
-
-    <section id="camView" class="view">
-      <video id="camStream" autoplay playsinline muted></video>
-      <div id="camHint">Point at signage, then tap SCAN</div>
-      <button id="scanBtn">SCAN SIGN</button>
-    </section>
-  </main>
-
-  <!-- The evacuation-sign card: ONE instruction, always on screen -->
-  <section id="card">
-    <div id="runner">🏃</div>
-    <div id="cardBody">
-      <p id="instruction">Stay aware. I'm listening to the station around you.</p>
+  <!-- Bottom sheet: the single instruction + ask. Draggable feel, calm. -->
+  <div id="sheet">
+    <div id="grip"></div>
+    <div id="sheetMain">
+      <p id="instruction">Setting up. Stay where you are — I'm watching for alerts.</p>
       <p id="freshness"></p>
-      <p id="question"></p>
+      <div id="qRow">
+        <p id="question"></p>
+        <button id="confirmBtn" hidden>Confirm</button>
+      </div>
     </div>
-    <button id="confirmBtn" hidden>CONFIRM ✓</button>
-  </section>
-
-  <!-- Activity drawer -->
-  <details id="drawer">
-    <summary>Activity</summary>
-    <div id="feed"></div>
-  </details>
-
-  <!-- Ask row + view switch -->
-  <footer>
-    <input id="askInput" placeholder="Ask AEGIS…" autocomplete="off" />
-    <button id="askBtn">ASK</button>
-    <button id="voiceBtn" type="button">VOICE</button>
-    <nav>
-      <button id="tabMap" class="tab active">🗺 MAP</button>
-      <button id="tabCam" class="tab">📷 CAMERA</button>
-    </nav>
-    <details id="demoControls">
-      <summary>demo</summary>
-      <button data-demo="quake">🌏 Quake</button>
-      <button data-demo="pack">⬇ Map pack</button>
-      <button data-demo="reset">↺ Reset</button>
-      <button data-demo="offline">✈ Simulate offline</button>
+    <div id="askRow">
+      <input id="askInput" placeholder="Ask AEGIS anything…" autocomplete="off" />
+      <button id="micBtn" aria-label="Voice">🎤</button>
+    </div>
+    <details id="proofPanel">
+      <summary>System status</summary>
+      <div class="proof-grid">
+        <div><span>Reasoning</span><b id="pxEngine">—</b></div>
+        <div><span>Latency</span><b id="pxLatency">—</b></div>
+        <div><span>State chain</span><b id="pxChain">—</b></div>
+        <div><span>Live scout</span><b id="pxEnv">—</b></div>
+        <div><span>QA check</span><b id="pxQA">—</b></div>
+        <div><span>Position</span><b id="pxGps">—</b></div>
+      </div>
+      <div id="feed"></div>
+      <div id="demoRow">
+        <button data-demo="quake">Simulate quake</button>
+        <button data-demo="reset">Reset</button>
+        <button data-demo="offline">Go offline</button>
+      </div>
     </details>
-  </footer>
+  </div>
+
+  <!-- Bottom nav bar (native app feel) -->
+  <nav id="tabbar">
+    <button id="tabMap" class="tab active"><span class="ti">🗺</span><span>Map</span></button>
+    <button id="tabCam" class="tab"><span class="ti">📷</span><span>Camera</span></button>
+  </nav>
 
   <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.js" crossorigin="anonymous"></script>
-  <!-- MediaPipe GenAI (offline Gemma). SW caches bundle + wasm + model. -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-genai/genai_bundle.cjs" crossorigin="anonymous"></script>
   <script src="/app.js"></script>
 </body>

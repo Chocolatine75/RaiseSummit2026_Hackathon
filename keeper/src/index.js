@@ -48,6 +48,7 @@ function freshState() {
     event: { type: null, magnitude_reported: null, t0: null },
     environment: [], // translated PA lines + sign readings, newest last
     live_delta: { exits_down: [], official_evac_direction: null, shelters: [], as_of: null },
+    route: null, // real OSRM walking route to the chosen shelter: {target, distance_m, duration_s, coords, first_step}
     guidance: { current_instruction_en: null, next_question: null, needs_tap: false, confirmed: false },
     audit: { status: "idle", checks: [], t: null }, // filled by runAudit + the Auditor agent
     network: { online: true, last_serialized_to_device: null },
@@ -177,6 +178,24 @@ export class SessionDO {
         s.guidance.confirmed = true;
         s.guidance.needs_tap = false;
         break;
+      case "set_location": { // from the phone's real GPS: { lat, lng, accuracy_m, place }
+        const p = event.payload || {};
+        if (p.lat != null && p.lng != null) {
+          s.user.location = {
+            ...s.user.location,
+            lat: p.lat, lng: p.lng,
+            accuracy_m: p.accuracy_m ?? null,
+            source: "device_gps",
+            ...(p.place ? { station: p.place } : {}),
+          };
+          // Re-fetch real shelters + route for the NEW real position if a quake is active.
+          if (s.event?.type === "earthquake") {
+            const shelters = await this.realShelters(s).catch(() => null);
+            if (shelters?.length) { s.live_delta.shelters = shelters; s.live_delta.as_of = t; }
+          }
+        }
+        break;
+      }
       case "audit_report": // from the Auditor agent: independent LLM quality check
         s.audit = { ...event.payload, t, source: "auditor-agent" };
         break;
@@ -211,7 +230,60 @@ export class SessionDO {
         });
       }
     }
+
+    // After shelters land (or the user's GPS moves), compute a REAL walking
+    // route along actual streets to the best step-free shelter. This is what
+    // makes the on-screen direction real, not a straight line.
+    if (event.type === "delta_update" || event.type === "set_location") {
+      const s2 = await this.situation();
+      const route = await this.computeRoute(s2).catch((e) => { // mutates s2's target shelter dist
+        console.log("routing failed:", String(e).slice(0, 200));
+        return null;
+      });
+      if (route) {
+        s2.route = route;
+        await this.reason(s2); // re-guide with the REAL walking distance now on the shelter
+        runAudit(s2, { requireStateChain: !!this.env.GEMINI_API_KEY });
+        await this.state.storage.put("situation", s2);
+        await this.broadcast();
+      }
+    }
     return json({ ok: true });
+  }
+
+  // ---------- Real walking route: OSRM (real streets, real polyline, no key) ----------
+  async computeRoute(s) {
+    const { lat, lng } = s.user.location;
+    const shelters = s.live_delta?.shelters || [];
+    if (lat == null || !shelters.length) return null;
+    // Pick the target Maria can actually reach: open + step-free + nearest.
+    const reachable = shelters.filter((x) => x.capacity === "open" && x.step_free && x.lat != null);
+    const target = (reachable.length ? reachable : shelters).sort((a, b) => a.dist_m - b.dist_m)[0];
+    if (!target?.lat) return null;
+
+    const url = `https://router.project-osrm.org/route/v1/foot/${lng},${lat};${target.lng},${target.lat}` +
+      `?overview=full&geometries=geojson&steps=true`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`osrm ${res.status}`);
+    const data = await res.json();
+    const r = data.routes?.[0];
+    if (!r) return null;
+    const routeInfo = {
+      target: target.name,
+      target_lat: target.lat,
+      target_lng: target.lng,
+      distance_m: Math.round(r.distance), // REAL walking distance along streets
+      duration_s: Math.round(r.duration),
+      // GeoJSON is [lng,lat]; Leaflet wants [lat,lng].
+      coords: r.geometry.coordinates.map(([x, y]) => [y, x]),
+      first_step: r.legs?.[0]?.steps?.find((st) => st.name)?.name || null,
+      as_of: new Date().toISOString(),
+    };
+    // Keep the shelter's displayed distance consistent with the real route so
+    // the card and the banner never disagree (they did: straight-line vs walking).
+    target.dist_m = routeInfo.distance_m;
+    target.walk_min = Math.max(1, Math.round(r.duration / 60));
+    return routeInfo;
   }
 
   // ---------- Real shelters: Grounding with Google Maps (real places, not staged) ----------
