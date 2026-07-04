@@ -9,7 +9,7 @@
  *    because those are big and never change — this is what makes airplane mode
  *    work. The map-pack beat pre-fills the tile cache.
  */
-const CACHE = "aegis-v3";
+const CACHE = "aegis-v4";
 const SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", (e) => {

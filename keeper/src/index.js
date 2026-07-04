@@ -131,8 +131,15 @@ export class SessionDO {
       } catch { /* ignore malformed */ }
     });
     // New connection immediately gets the current full state — this is the
-    // kill-the-app-reopen-it persistence beat working for free.
-    this.situation().then((s) => server.send(JSON.stringify(s)));
+    // kill-the-app-reopen-it persistence beat working for free. Also self-heal
+    // any stale session (shelters present but no route) so a reconnecting judge
+    // never sees a half-populated screen from an older deploy.
+    this.situation().then((s) => {
+      server.send(JSON.stringify(s));
+      if (s.live_delta?.shelters?.length && !s.route?.coords?.length) {
+        this.enqueue(() => this.handleEvent({ type: "delta_update", payload: {}, src: "self-heal" }));
+      }
+    });
     return new Response(null, { status: 101, webSocket: client });
   }
 
