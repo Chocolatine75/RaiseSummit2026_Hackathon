@@ -51,6 +51,7 @@ function freshState() {
     route: null, // real OSRM walking route to the chosen shelter: {target, distance_m, duration_s, coords, first_step}
     guidance: { current_instruction_en: null, next_question: null, needs_tap: false, confirmed: false },
     audit: { status: "idle", checks: [], t: null }, // filled by runAudit + the Auditor agent
+    agents: [], // LIVE agent operations log — every server-side agent action, newest last
     network: { online: true, last_serialized_to_device: null },
   };
 }
@@ -84,6 +85,8 @@ export class SessionDO {
       case "/api/reset": {
         await this.state.storage.put("situation", freshState());
         await this.state.storage.delete("last_interaction_id");
+        await this.state.storage.delete("scout_env");
+        await this.state.storage.delete("scout_itx");
         await this.broadcast();
         return json({ ok: true });
       }
@@ -139,6 +142,18 @@ export class SessionDO {
     for (const ws of this.sockets) {
       try { ws.send(payload); } catch { this.sockets.delete(ws); }
     }
+  }
+
+  // ---------- Live agent-operations log (what the "Agent Ops" panel shows) ----------
+  // Every server-side agent action becomes a visible line, broadcast immediately
+  // so judges watch the pipeline run in real time.
+  async logAgent(agent, status, detail, extra = {}) {
+    const s = await this.situation();
+    s.agents = s.agents || [];
+    s.agents.push({ agent, status, detail, t: new Date().toISOString(), ...extra });
+    if (s.agents.length > 40) s.agents = s.agents.slice(-40);
+    await this.state.storage.put("situation", s);
+    await this.broadcast();
   }
 
   // ---------- Event reconciliation: fixed if/then, NOT an AI call ----------
@@ -214,41 +229,91 @@ export class SessionDO {
     }
     await this.broadcast();
 
-    // Quake just hit → pull REAL evacuation areas around Maria's REAL coordinates
-    // via Grounding with Google Maps. Runs as a follow-up inside the same queue
-    // job: the quake guidance reaches the UI immediately, real shelters ~3s later.
+    // Quake just hit → run the whole agent pipeline SERVER-SIDE, logging each
+    // step live so the Agent Ops panel shows it running. This is why the agents
+    // work on the deployed URL with no laptop attached.
     if (event.type === "quake") {
+      await this.logAgent("Keeper", "active", "Earthquake detected — orchestrating response agents");
+
+      // 1) Scout (Antigravity) — real Google-hosted sandbox browsing the web.
+      await this.runScout(s).catch((e) => this.logAgent("Scout", "error", String(e).slice(0, 120)));
+
+      // 2) Maps grounding — real Google Maps evacuation places.
+      await this.logAgent("Maps", "active", "Querying Google Maps for real evacuation areas nearby");
       const shelters = await this.realShelters(s).catch((e) => {
-        console.log("maps grounding failed:", String(e).slice(0, 300));
+        this.logAgent("Maps", "error", String(e).slice(0, 120));
         return null;
       });
       if (shelters?.length) {
-        await this.handleEvent({
-          type: "delta_update",
-          payload: { shelters },
-          src: "maps-grounding",
-        });
+        await this.logAgent("Maps", "done", `Found ${shelters.length} real places · nearest ${shelters[0].name}`);
+        await this.handleEvent({ type: "delta_update", payload: { shelters }, src: "maps-grounding" });
       }
     }
 
     // After shelters land (or the user's GPS moves), compute a REAL walking
-    // route along actual streets to the best step-free shelter. This is what
-    // makes the on-screen direction real, not a straight line.
+    // route along actual streets to the best step-free shelter.
     if (event.type === "delta_update" || event.type === "set_location") {
+      await this.logAgent("Router", "active", "Computing step-free walking route (OSRM, real streets)");
       const s2 = await this.situation();
-      const route = await this.computeRoute(s2).catch((e) => { // mutates s2's target shelter dist
-        console.log("routing failed:", String(e).slice(0, 200));
+      const route = await this.computeRoute(s2).catch((e) => {
+        this.logAgent("Router", "error", String(e).slice(0, 120));
         return null;
       });
       if (route) {
+        await this.logAgent("Router", "done", `${route.distance_m}m · ${Math.round(route.duration_s / 60)}min via ${route.first_step || "route"}`);
         s2.route = route;
-        await this.reason(s2); // re-guide with the REAL walking distance now on the shelter
+        await this.reason(s2); // re-guide with the REAL walking distance
         runAudit(s2, { requireStateChain: !!this.env.GEMINI_API_KEY });
         await this.state.storage.put("situation", s2);
         await this.broadcast();
+        await this.logAgent("QA", s2.audit.status === "pass" ? "done" : "warn",
+          s2.audit.status === "pass" ? "All safety invariants passed" : "Review flagged an issue");
       }
     }
     return json({ ok: true });
+  }
+
+  // ---------- Scout: REAL Antigravity agent, running server-side from the Keeper ----------
+  // Browses the web from a Google-hosted Linux sandbox for live disruption info,
+  // resuming the same sandbox by environment_id. Logged live to Agent Ops.
+  async runScout(s) {
+    if (!this.env.GEMINI_API_KEY) return;
+    const prevEnvId = await this.state.storage.get("scout_env"); // stored as the raw string id
+    const prevItx = await this.state.storage.get("scout_itx");
+    await this.logAgent("Scout", "active",
+      prevEnvId ? "Resuming Antigravity sandbox to re-check conditions" : "Launching Antigravity agent in Google-hosted sandbox");
+
+    const { lat, lng, station } = s.user.location;
+    const body = {
+      agent: "antigravity-preview-05-2026",
+      input:
+        `You are an emergency scout. An earthquake just hit near ${station}, Tokyo ` +
+        `(lat ${lat}, lng ${lng}). Search the web for the current situation and reply ONLY with JSON: ` +
+        `{"official_evac_direction": string, "notes": string}. Keep notes under 20 words.`,
+      tools: [{ type: "google_search" }, { type: "url_context" }],
+      // First run: fresh sandbox ("remote"). Resume: pass the environment_id string.
+      environment: prevEnvId || "remote",
+      ...(prevItx ? { previous_interaction_id: prevItx } : {}),
+    };
+    const res = await fetch(`${GEMINI_BASE}/interactions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": this.env.GEMINI_API_KEY },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`scout ${res.status}: ${(await res.text()).slice(0, 120)}`);
+    const data = await res.json();
+    const envId = data.environment_id || data.environment?.id || prevEnvId || null;
+    if (data.id) await this.state.storage.put("scout_itx", data.id);
+    if (envId) await this.state.storage.put("scout_env", envId);
+
+    const parsed = parseJsonLoose(extractText(data));
+    const s2 = await this.situation();
+    if (envId) s2.scout_environment_id = envId;
+    if (parsed?.official_evac_direction) s2.live_delta.official_evac_direction = parsed.official_evac_direction;
+    await this.state.storage.put("situation", s2);
+    await this.logAgent("Scout", "done",
+      `Sandbox ${envId ? shortId(envId) : "active"}${prevEnvId ? " (resumed)" : " (new)"} · ${parsed?.notes || "web scan complete"}`,
+      { environment_id: envId });
   }
 
   // ---------- Real walking route: OSRM (real streets, real polyline, no key) ----------
@@ -489,6 +554,8 @@ function runAudit(s, { requireStateChain = true } = {}) {
 }
 
 // ---------- Helpers ----------
+function shortId(id) { return id ? `${String(id).slice(0, 10)}…` : ""; }
+
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,

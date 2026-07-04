@@ -62,20 +62,23 @@
       <button id="micBtn" aria-label="Voice">🎤</button>
     </div>
     <details id="proofPanel">
-      <summary>System status</summary>
+      <summary>System status · agent operations</summary>
       <div class="proof-grid">
         <div><span>Reasoning</span><b id="pxEngine">—</b></div>
         <div><span>Latency</span><b id="pxLatency">—</b></div>
         <div><span>State chain</span><b id="pxChain">—</b></div>
-        <div><span>Live scout</span><b id="pxEnv">—</b></div>
+        <div><span>Antigravity</span><b id="pxEnv">—</b></div>
         <div><span>QA check</span><b id="pxQA">—</b></div>
         <div><span>Position</span><b id="pxGps">—</b></div>
       </div>
+      <div class="ops-head">Live agent operations</div>
+      <div id="ops"></div>
+      <div class="ops-head">Situation feed</div>
       <div id="feed"></div>
       <div id="demoRow">
-        <button data-demo="quake">Simulate quake</button>
-        <button data-demo="reset">Reset</button>
-        <button data-demo="offline">Go offline</button>
+        <button data-demo="quake">▶ Run scenario</button>
+        <button data-demo="reset">↺ Reset</button>
+        <button data-demo="offline">✈ Go offline</button>
       </div>
     </details>
   </div>

@@ -320,6 +320,23 @@ function render() {
   const loc = state.user?.location;
   setProof("pxGps", loc?.source === "device_gps" ? `GPS ±${loc.accuracy_m ?? "?"}m` : "default", loc?.source === "device_gps");
 
+  // Live agent operations — the "control room" judges asked to see.
+  const ops = document.getElementById("ops");
+  if (ops) {
+    ops.innerHTML = "";
+    const rows = [...(state.agents || [])].reverse().slice(0, 8);
+    if (!rows.length) {
+      ops.innerHTML = `<div class="op"><span class="detail">Idle — run the scenario to see agents work.</span></div>`;
+    }
+    for (const a of rows) {
+      const d = document.createElement("div");
+      d.className = `op ${a.status}`;
+      d.innerHTML = `<span class="agent ${esc(a.agent)}">${esc(a.agent)}</span>` +
+        `<span class="detail">${esc(a.detail)}</span><span class="st"></span>`;
+      ops.appendChild(d);
+    }
+  }
+
   const feed = document.getElementById("feed");
   feed.innerHTML = "";
   for (const line of [...localLog].reverse().slice(0, 3)) {

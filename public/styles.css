@@ -121,6 +121,25 @@ body.offline #freshness { color: var(--amber); }
 .proof-grid b { font-size: 13px; font-family: ui-monospace, monospace; }
 .proof-grid b.ok { color: var(--safe); }
 .proof-grid b.warn { color: var(--amber); }
+.ops-head { font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--dim); margin: 12px 0 6px; }
+#ops { display: flex; flex-direction: column; gap: 5px; margin-bottom: 4px; }
+.op { display: flex; align-items: center; gap: 9px; background: #0a0e12;
+  border: 1px solid var(--glass-line); border-radius: 10px; padding: 8px 11px; font-size: 12.5px; }
+.op .agent { font-weight: 800; min-width: 62px; }
+.op .agent.Keeper { color: #7fb2ff; }
+.op .agent.Scout { color: #c58bff; }
+.op .agent.Maps { color: #ffd166; }
+.op .agent.Router { color: #12d18e; }
+.op .agent.QA { color: #4fe6ab; }
+.op .agent.Listener { color: #ff9e64; }
+.op .detail { flex: 1; color: var(--dim); }
+.op .st { font-size: 14px; }
+.op.active .st::after { content: "◍"; color: var(--amber); animation: spin 1.2s linear infinite; }
+.op.done .st::after { content: "✓"; color: var(--safe); }
+.op.error .st::after { content: "✕"; color: var(--danger); }
+.op.warn .st::after { content: "⚠"; color: var(--amber); }
+@keyframes spin { to { transform: rotate(360deg); } }
 #feed { max-height: 22dvh; overflow-y: auto; margin: 4px 0; }
 .evt { background: #0a0e12; border: 1px solid var(--glass-line); border-radius: 10px;
   padding: 8px 11px; font-size: 13px; margin-bottom: 6px; }
