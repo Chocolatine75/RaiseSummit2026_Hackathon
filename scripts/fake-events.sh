@@ -17,7 +17,7 @@ post '{"type":"pa_translation","payload":{"ja":"西口へ避難してくださ�
 sleep 2
 post '{"type":"sign_read","payload":{"ja":"この出口閉鎖","en":"This exit is closed","type":"exit_closed"},"src":"test"}'
 sleep 2
-post '{"type":"delta_update","payload":{"exits_down":["east","south_stairs"],"official_evac_direction":"west_concourse","shelters":[{"name":"Shinjuku Chuo Park","capacity":"open","dist_m":600,"step_free":true}],"environment_id":"env_fake_123"},"src":"test"}'
+post '{"type":"delta_update","payload":{"exits_down":["east","south_stairs"],"official_evac_direction":"west_concourse","shelters":[{"name":"Shinjuku Chuo Park","lat":35.6907,"lng":139.6917,"capacity":"open","dist_m":600,"step_free":true},{"name":"Shinjuku Elementary School","lat":35.6938,"lng":139.7034,"capacity":"open","dist_m":450,"step_free":false},{"name":"Yoyogi Community Hall","lat":35.6830,"lng":139.7020,"capacity":"full","dist_m":1200,"step_free":true},{"name":"Okubo Sports Center","lat":35.7009,"lng":139.7086,"capacity":"open","dist_m":900,"step_free":true}],"environment_id":"env_fake_123"},"src":"test"}'
 
 echo
 echo "Now on the phone: watch the feed fill → tap Confirm → enable airplane mode → ask a question."

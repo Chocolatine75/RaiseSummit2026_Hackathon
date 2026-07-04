@@ -20,9 +20,12 @@ self.addEventListener("fetch", (e) => {
   // Never cache live endpoints.
   if (["/ws", "/event"].includes(url.pathname) || url.pathname.startsWith("/api/")) return;
 
-  // Cache-first for: our shell, the model file, and the MediaPipe CDN (bundle + wasm).
+  // Cache-first for: our shell, the model file, the CDN (Leaflet + MediaPipe
+  // bundle + wasm), and OSM map tiles (the map-pack beat pre-fills these).
   const cacheable =
-    url.origin === location.origin || url.hostname === "cdn.jsdelivr.net";
+    url.origin === location.origin ||
+    url.hostname === "cdn.jsdelivr.net" ||
+    url.hostname === "tile.openstreetmap.org";
   if (!cacheable) return;
 
   e.respondWith(

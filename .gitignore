@@ -1,9 +1,11 @@
 node_modules/
+.DS_Store
 .dev.vars
 .env
 public/models/*.task
 public/models/*.litertlm
 workers/scout/scout-state.json
 .wrangler/
+.wrangler-home/
 *.pcm
 *.mp3

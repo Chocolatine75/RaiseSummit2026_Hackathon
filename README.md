@@ -62,17 +62,25 @@ staged web ─Scout→  ┘   (Interactions API,   Object     └→ feed UI + o
 # Prove the spine with zero Gemini workers (H1–H5 testing):
 ./scripts/fake-events.sh https://aegis-keeper.<you>.workers.dev demo
 
+# Continuous rehearsal harness: drives events and checks /api/health after each step.
+node scripts/harness-loop.mjs https://aegis-keeper.<you>.workers.dev demo --loop
+
 # Real beats:
 export GEMINI_API_KEY=... KEEPER_URL=https://aegis-keeper.<you>.workers.dev
 node workers/listener/listener.mjs assets/pa2.pcm      # beat 2: PA → translation
 #   (beat 3 is the phone camera → 📷 Read sign button)
 node workers/scout/scout.mjs                           # beat 4: Antigravity fills live_delta
 node workers/scout/scout.mjs                           # run again → watch "RESUMED" + same env id
+node workers/auditor/auditor.mjs --loop                # QA agent: reviews guidance every 15s → QA badge
 # beat 5: airplane mode on the phone → ask AEGIS a question → Gemma answers offline
 ```
 
 Reset between rehearsals: the `demo → ↺ Reset` button in the app footer, or
 `curl -X POST '<keeper>/api/reset?session=demo'`.
+
+Voice on Android/Chrome is user-gesture gated. Tap the `VOICE` button once at
+the start of rehearsal; it should say "Voice is ready." If it does not, use the
+large instruction card + live narration fallback and keep the Gemma reasoning beat.
 
 ## The three rules that keep this working at 3 a.m.
 
@@ -89,7 +97,11 @@ Reset between rehearsals: the `demo → ↺ Reset` button in the app footer, or
 - **WS won't connect** → check the URL is `wss://` on https; `/ws?session=demo`.
 - **Guidance never updates** → `curl '<keeper>/api/state?session=demo'`; if
   `next_question` shows `(reasoning offline: …)`, the Interactions call failed —
-  read the error, usually the secret wasn't set.
+  read the error, usually the secret wasn't set. The Keeper now has deterministic
+  fallback guidance so the demo card should still update while you fix the key.
+- **Need an automatic health check** → `curl '<keeper>/api/health?session=demo'`
+  or run `node scripts/harness-loop.mjs <keeper> demo --loop`. The health endpoint
+  runs the deterministic QA invariants, including "no invented elevator/lift".
 - **Gemma won't load offline** → the model wasn't cached: load the page fully once
   online, watch DevTools→Application→Cache Storage for the `.task` file (~1.3GB).
 - **Listener emits nothing** → your clip must be raw PCM 16kHz mono 16-bit

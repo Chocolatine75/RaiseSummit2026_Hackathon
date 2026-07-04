@@ -2,50 +2,81 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
   <title>AEGIS</title>
   <link rel="manifest" href="/manifest.json" />
+  <!-- Leaflet (cached by the service worker → works in airplane mode) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.css" crossorigin="anonymous" />
   <link rel="stylesheet" href="/styles.css" />
-  <meta name="theme-color" content="#0b1220" />
+  <meta name="theme-color" content="#0a0e12" />
 </head>
 <body>
-  <!-- Status strip: the proof-of-primitive on camera. Judges see the IDs. -->
+  <!-- Engine strip: WHICH BRAIN IS DRIVING, visible at all times (the judges' proof) -->
   <header id="strip">
-    <span id="net" class="pill online">ONLINE</span>
-    <span class="id">itx: <b id="chainId">—</b></span>
-    <span class="id">env: <b id="envId">—</b></span>
+    <div id="mode" class="mode online">
+      <span class="dot"></span>
+      <span id="modeLabel">ONLINE</span>
+      <span id="engine">Gemini 3.5 Flash · cloud</span>
+    </div>
+    <div class="ids">
+      <span>itx <b id="chainId">—</b></span>
+      <span>env <b id="envId">—</b></span>
+      <span id="qa" class="qa">QA —</span>
+    </div>
   </header>
 
-  <!-- The one big instruction card -->
+  <!-- Main viewport: map or camera, toggled by the bottom bar -->
   <main>
-    <section id="card">
-      <p id="instruction">Waiting for the world…</p>
-      <p id="freshness"></p>
-      <p id="question"></p>
-      <button id="confirmBtn" hidden>✓ Confirm</button>
+    <section id="mapView" class="view active">
+      <div id="map"></div>
+      <div id="mapBadge" hidden>⬇ caching map pack… <b id="tileCount"></b></div>
+      <div id="mapCredit">© OpenStreetMap · shelters: Google Maps grounding</div>
     </section>
 
-    <!-- Feed of everything the agents learned -->
-    <section id="feed"></section>
+    <section id="camView" class="view">
+      <video id="camStream" autoplay playsinline muted></video>
+      <div id="camHint">Point at signage, then tap SCAN</div>
+      <button id="scanBtn">SCAN SIGN</button>
+    </section>
   </main>
 
-  <!-- Controls: camera capture (Eyes), ask (offline voice/typing), demo triggers -->
+  <!-- The evacuation-sign card: ONE instruction, always on screen -->
+  <section id="card">
+    <div id="runner">🏃</div>
+    <div id="cardBody">
+      <p id="instruction">Stay aware. I'm listening to the station around you.</p>
+      <p id="freshness"></p>
+      <p id="question"></p>
+    </div>
+    <button id="confirmBtn" hidden>CONFIRM ✓</button>
+  </section>
+
+  <!-- Activity drawer -->
+  <details id="drawer">
+    <summary>Activity</summary>
+    <div id="feed"></div>
+  </details>
+
+  <!-- Ask row + view switch -->
   <footer>
-    <label class="btn" for="camInput">📷 Read sign</label>
-    <input id="camInput" type="file" accept="image/*" capture="environment" hidden />
-    <input id="askInput" placeholder="Ask AEGIS…" />
-    <button id="askBtn" class="btn">Ask</button>
+    <input id="askInput" placeholder="Ask AEGIS…" autocomplete="off" />
+    <button id="askBtn">ASK</button>
+    <button id="voiceBtn" type="button">VOICE</button>
+    <nav>
+      <button id="tabMap" class="tab active">🗺 MAP</button>
+      <button id="tabCam" class="tab">📷 CAMERA</button>
+    </nav>
     <details id="demoControls">
       <summary>demo</summary>
       <button data-demo="quake">🌏 Quake</button>
+      <button data-demo="pack">⬇ Map pack</button>
       <button data-demo="reset">↺ Reset</button>
       <button data-demo="offline">✈ Simulate offline</button>
     </details>
   </footer>
 
-  <!-- MediaPipe GenAI bundle (offline LLM). The service worker caches this +
-       the wasm + the model file, so it all works in airplane mode.
-       Verified usage: developers.google.com/edge/mediapipe/solutions/genai/llm_inference/web_js -->
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.js" crossorigin="anonymous"></script>
+  <!-- MediaPipe GenAI (offline Gemma). SW caches bundle + wasm + model. -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-genai/genai_bundle.cjs" crossorigin="anonymous"></script>
   <script src="/app.js"></script>
 </body>

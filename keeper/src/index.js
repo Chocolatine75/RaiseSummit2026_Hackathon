@@ -15,6 +15,7 @@
  *   POST /api/eyes      { image_b64, mime_type } → Gemini vision reads the sign → sign_read event
  *   POST /api/reset     restore the pristine pre-demo state (rehearsal reset)
  *   GET  /api/state     current Situation Object as JSON (debugging)
+ *   GET  /api/health    deterministic audit summary (harness/debugging)
  */
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -23,7 +24,7 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (["/ws", "/event", "/api/eyes", "/api/reset", "/api/state"].includes(url.pathname)) {
+    if (["/ws", "/event", "/api/eyes", "/api/reset", "/api/state", "/api/health"].includes(url.pathname)) {
       const session = url.searchParams.get("session") || "demo";
       const stub = env.SESSION_DO.get(env.SESSION_DO.idFromName(session));
       return stub.fetch(request);
@@ -42,12 +43,13 @@ function freshState() {
       name: "Maria",
       language: "en",
       constraints: ["child_age_6", "no_stairs"],
-      location: { station: "Shinjuku", level: "B2_platform_9" },
+      location: { station: "Shinjuku", level: "B2_platform_9", lat: 35.6896, lng: 139.7006 },
     },
     event: { type: null, magnitude_reported: null, t0: null },
     environment: [], // translated PA lines + sign readings, newest last
     live_delta: { exits_down: [], official_evac_direction: null, shelters: [], as_of: null },
     guidance: { current_instruction_en: null, next_question: null, needs_tap: false, confirmed: false },
+    audit: { status: "idle", checks: [], t: null }, // filled by runAudit + the Auditor agent
     network: { online: true, last_serialized_to_device: null },
   };
 }
@@ -57,13 +59,26 @@ export class SessionDO {
     this.state = state;
     this.env = env;
     this.sockets = new Set();
+    // DOs interleave concurrent requests at await points — two rapid events
+    // would read stale state and clobber each other's writes. This queue makes
+    // event handling truly sequential: the one-writer rule, enforced.
+    this.queue = Promise.resolve();
+  }
+
+  enqueue(fn) {
+    const run = this.queue.then(fn, fn);
+    this.queue = run.then(() => {}, () => {});
+    return run;
   }
 
   async fetch(request) {
     const url = new URL(request.url);
     switch (url.pathname) {
       case "/ws": return this.handleWebSocket(request);
-      case "/event": return this.handleEvent(await request.json());
+      case "/event": {
+        const event = await request.json();
+        return this.enqueue(() => this.handleEvent(event));
+      }
       case "/api/eyes": return this.handleEyes(await request.json());
       case "/api/reset": {
         await this.state.storage.put("situation", freshState());
@@ -72,6 +87,19 @@ export class SessionDO {
         return json({ ok: true });
       }
       case "/api/state": return json(await this.situation());
+      case "/api/health": {
+        const s = await this.situation();
+        runAudit(s, { requireStateChain: !!this.env.GEMINI_API_KEY });
+        return json({
+          ok: s.audit.status === "pass",
+          status: s.audit.status,
+          checks: s.audit.checks,
+          interaction_chain_id: s.interaction_chain_id,
+          scout_environment_id: s.scout_environment_id,
+          guidance: s.guidance,
+          live_delta_as_of: s.live_delta?.as_of,
+        }, s.audit.status === "pass" ? 200 : 503);
+      }
       default: return new Response("not found", { status: 404 });
     }
   }
@@ -92,8 +120,11 @@ export class SessionDO {
     server.addEventListener("close", () => this.sockets.delete(server));
     server.addEventListener("error", () => this.sockets.delete(server));
     // The client may also emit events over the socket (e.g. user_tap).
-    server.addEventListener("message", async (msg) => {
-      try { await this.handleEvent(JSON.parse(msg.data)); } catch { /* ignore malformed */ }
+    server.addEventListener("message", (msg) => {
+      try {
+        const event = JSON.parse(msg.data);
+        this.enqueue(() => this.handleEvent(event));
+      } catch { /* ignore malformed */ }
     });
     // New connection immediately gets the current full state — this is the
     // kill-the-app-reopen-it persistence beat working for free.
@@ -146,14 +177,66 @@ export class SessionDO {
         s.guidance.confirmed = true;
         s.guidance.needs_tap = false;
         break;
+      case "audit_report": // from the Auditor agent: independent LLM quality check
+        s.audit = { ...event.payload, t, source: "auditor-agent" };
+        break;
       default:
         return json({ ok: false, error: `unknown event type: ${event.type}` }, 400);
     }
 
     await this.state.storage.put("situation", s);
-    if (needsReasoning) await this.reason(s); // updates guidance + persists again
+    if (needsReasoning) {
+      const t0 = Date.now();
+      await this.reason(s); // updates guidance + persists again
+      s.timing = { last_reason_ms: Date.now() - t0 }; // latency, shown in the UI strip
+      runAudit(s, { requireStateChain: !!this.env.GEMINI_API_KEY });
+      // deterministic invariant checks after every reasoning step
+      await this.state.storage.put("situation", s);
+    }
     await this.broadcast();
+
+    // Quake just hit → pull REAL evacuation areas around Maria's REAL coordinates
+    // via Grounding with Google Maps. Runs as a follow-up inside the same queue
+    // job: the quake guidance reaches the UI immediately, real shelters ~3s later.
+    if (event.type === "quake") {
+      const shelters = await this.realShelters(s).catch((e) => {
+        console.log("maps grounding failed:", String(e).slice(0, 300));
+        return null;
+      });
+      if (shelters?.length) {
+        await this.handleEvent({
+          type: "delta_update",
+          payload: { shelters },
+          src: "maps-grounding",
+        });
+      }
+    }
     return json({ ok: true });
+  }
+
+  // ---------- Real shelters: Grounding with Google Maps (real places, not staged) ----------
+  async realShelters(s) {
+    const { lat, lng, station } = s.user.location;
+    if (lat == null || !this.env.GEMINI_API_KEY) return null;
+    const res = await fetch(`${GEMINI_BASE}/interactions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": this.env.GEMINI_API_KEY },
+      body: JSON.stringify({
+        model: "gemini-3.5-flash",
+        input:
+          `An earthquake just struck. Using Google Maps, find up to 6 REAL public parks, plazas, ` +
+          `or large open spaces usable as evacuation areas within 1500m of latitude ${lat}, ` +
+          `longitude ${lng} (near ${station}, Tokyo). Reply ONLY with JSON, no prose: ` +
+          `{"shelters":[{"name":string,"lat":number,"lng":number,"dist_m":number,` +
+          `"step_free":boolean,"capacity":"open"}]} — step_free=true for street-level parks/plazas. ` +
+          `Only real places returned by Google Maps; do not invent any.`,
+        tools: [{ type: "google_maps", latitude: lat, longitude: lng }],
+        store: false, // one-shot lookup — keep it out of the guidance chain
+      }),
+    });
+    if (!res.ok) throw new Error(`maps ${res.status}: ${await res.text()}`);
+    const parsed = parseJsonLoose(extractText(await res.json()));
+    return parsed?.shelters?.filter((x) => x.lat != null && x.lng != null) ?? null;
   }
 
   // ---------- Guidance via the Interactions API (stateful — the judged primitive) ----------
@@ -166,11 +249,16 @@ export class SessionDO {
       `Latest development is the last entry of "environment" or the "live_delta". ` +
       `Respond ONLY with JSON: {"surface_now": boolean, "plain_line_en": string, ` +
       `"next_question": string, "needs_tap": boolean}. ` +
+      `surface_now=true whenever the newest development gives ANY new actionable ` +
+      `information — including the initial quake (immediate safety posture). ` +
+      `Only false for pure duplicates of guidance already given. ` +
       `plain_line_en is ONE short spoken-style instruction respecting her constraints, ` +
+      `never inventing exits, elevators, escalators, shelters, distances, or staff locations not present in the JSON. ` +
       `citing data freshness when using live_delta. needs_tap=true only when the ` +
       `instruction changes her route or files something on her behalf.`;
 
     try {
+      if (!this.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not configured");
       const res = await fetch(`${GEMINI_BASE}/interactions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": this.env.GEMINI_API_KEY },
@@ -202,11 +290,13 @@ export class SessionDO {
         console.log("Condition g && g.surface_now failed. g.surface_now =", g?.surface_now);
       }
     } catch (err) {
-      // Never let a flaky API kill the loop — surface the raw fact instead.
-      const last = s.environment.at(-1);
-      s.guidance.current_instruction_en = last?.en
-        ? `Update: ${last.en}` : s.guidance.current_instruction_en;
-      s.guidance.next_question = `(reasoning offline: ${String(err).slice(0, 80)})`;
+      // Never let a flaky API kill the loop. The demo spine can still run from
+      // deterministic guidance while the Interactions API/key is being fixed.
+      const fallback = deterministicGuidance(s);
+      s.guidance.current_instruction_en = fallback.current_instruction_en;
+      s.guidance.next_question = `${fallback.next_question} (reasoning offline: ${String(err).slice(0, 70)})`;
+      s.guidance.needs_tap = fallback.needs_tap;
+      s.guidance.confirmed = false;
     }
     await this.state.storage.put("situation", s);
   }
@@ -232,6 +322,98 @@ export class SessionDO {
     if (!sign?.en) return json({ ok: false, error: "no text found in image" }, 422);
     return this.handleEvent({ type: "sign_read", payload: sign, src: "eyes" });
   }
+}
+
+function deterministicGuidance(s) {
+  const shelters = s.live_delta?.shelters || [];
+  const bestShelter = shelters
+    .filter((sh) => sh.capacity === "open" && sh.step_free)
+    .sort((a, b) => (a.dist_m ?? Infinity) - (b.dist_m ?? Infinity))[0];
+  const route = s.live_delta?.official_evac_direction;
+  const last = s.environment?.at(-1);
+
+  if (route && bestShelter) {
+    const age = s.live_delta?.as_of ? `${Math.max(0, Math.round((Date.now() - new Date(s.live_delta.as_of)) / 1000))} seconds old` : "not timestamped";
+    return {
+      current_instruction_en:
+        `Take the ${route.replaceAll("_", " ")}. Avoid stairs. ${bestShelter.name} is open, step-free, ${bestShelter.dist_m} meters away. Live data is ${age}.`,
+      next_question: "Is the west concourse ramp clear where you are?",
+      needs_tap: true,
+    };
+  }
+
+  if (last?.src === "sign" && /closed/i.test(last.en || "")) {
+    return {
+      current_instruction_en: `Do not use this exit. ${last.en}. Stay with staff flow and look for the step-free west concourse.`,
+      next_question: "Can you see a ramp or staff pointing to the west concourse?",
+      needs_tap: true,
+    };
+  }
+
+  if (last?.en) {
+    return {
+      current_instruction_en: `Update: ${last.en}`,
+      next_question: "Are you safe and away from stairs right now?",
+      needs_tap: false,
+    };
+  }
+
+  if (s.event?.type === "earthquake") {
+    return {
+      current_instruction_en: "Earthquake detected. Stay low, protect your head, keep your child close, and do not use stairs until a safe route is confirmed.",
+      next_question: "Are you away from platform edges and falling objects?",
+      needs_tap: false,
+    };
+  }
+
+  return {
+    current_instruction_en: "Stay aware. I am watching for safe, step-free updates.",
+    next_question: "Where are you standing right now?",
+    needs_tap: false,
+  };
+}
+
+// ---------- Built-in audit: deterministic invariants, checked on every step ----------
+// (The Auditor agent does the LLM-based semantic review; these are the cheap,
+// always-on checks that catch harness bugs the moment they happen.)
+function runAudit(s, { requireStateChain = true } = {}) {
+  const checks = [];
+  const ok = (name, pass, note = "") => checks.push({ name, ok: !!pass, note });
+
+  const hasEvents = (s.environment?.length || 0) > 0;
+  ok("guidance_present", !hasEvents || !!s.guidance.current_instruction_en,
+    hasEvents && !s.guidance.current_instruction_en ? "events arrived but no instruction surfaced" : "");
+
+  if (s.user.constraints?.includes("no_stairs") && s.guidance.current_instruction_en) {
+    const g = s.guidance.current_instruction_en.toLowerCase();
+    const badStairs = /\bstairs?\b/.test(g) && !/(no|avoid|without|closed|cannot|can't|instead of)[^.]*\bstairs?\b|\bstairs?\b[^.]*(closed|blocked)/.test(g);
+    ok("respects_no_stairs", !badStairs, badStairs ? "instruction may route via stairs" : "");
+  }
+
+  if (s.guidance.current_instruction_en) {
+    const stateText = JSON.stringify(s).toLowerCase();
+    const g = s.guidance.current_instruction_en.toLowerCase();
+    const inventedVerticalTransport =
+      /\b(elevator|lift|escalator)\b/.test(g) && !/\b(elevator|lift|escalator)\b/.test(stateText);
+    ok("no_invented_access_feature", !inventedVerticalTransport,
+      inventedVerticalTransport ? "instruction mentions elevator/lift/escalator not present in state" : "");
+  }
+
+  if (s.live_delta?.as_of) {
+    const ageS = (Date.now() - new Date(s.live_delta.as_of)) / 1000;
+    ok("delta_freshness", ageS < 300, ageS >= 300 ? `live data is ${Math.round(ageS / 60)}min old` : "");
+  }
+
+  ok("state_chain", !requireStateChain || !hasEvents || !!s.interaction_chain_id,
+    requireStateChain && hasEvents && !s.interaction_chain_id ? "no Interactions chain id — persistence not proven" : "");
+
+  const failed = checks.filter((c) => !c.ok);
+  s.audit = {
+    status: failed.length === 0 ? "pass" : "warn",
+    checks,
+    t: new Date().toISOString(),
+    source: "keeper-invariants",
+  };
 }
 
 // ---------- Helpers ----------

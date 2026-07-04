@@ -25,16 +25,35 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const TASK = `Open ${STAGED}/metro-status.html and ${STAGED}/shelters.html in your browser.
 Extract the CURRENT disruption picture. Reply ONLY with JSON, no prose:
 {"exits_down": string[], "official_evac_direction": string,
- "shelters": [{"name": string, "capacity": "open"|"full", "dist_m": number, "step_free": boolean}]}`;
+ "shelters": [{"name": string, "lat": number, "lng": number, "capacity": "open"|"full", "dist_m": number, "step_free": boolean}]}`;
 
 async function cycle() {
   const prev = existsSync(STATE_FILE) ? JSON.parse(readFileSync(STATE_FILE, "utf8")) : {};
 
+  // The sandbox's network is allowlist-only: it can ONLY reach domains named
+  // here. Our staged pages' domain must be on the list or browsing silently fails.
+  const keeperDomain = new URL(KEEPER).hostname;
+  const freshEnvironment = {
+    type: "remote",
+    network: {
+      allowlist: [
+        {
+          domain: "generativelanguage.googleapis.com",
+          transform: [{ key: "x-goog-api-key", value: "GEMINI_API_KEY" }],
+        },
+        { domain: keeperDomain },
+        { domain: new URL(STAGED).hostname },
+      ],
+    },
+  };
+
   const interaction = await ai.interactions.create({
     agent: "antigravity-preview-05-2026",
     input: prev.interaction_id ? `Re-check the same pages. ${TASK}` : TASK,
-    // First run: fresh sandbox. Later runs: RESUME the same one (the demo beat).
-    environment: prev.environment_id || "remote",
+    tools: [{ type: "code_execution" }, { type: "google_search" }, { type: "url_context" }],
+    // First run: fresh sandbox with the allowlist. Later runs: RESUME the same
+    // sandbox by id (the demo beat — "resuming via environment ID").
+    environment: prev.environment_id || freshEnvironment,
     ...(prev.interaction_id ? { previous_interaction_id: prev.interaction_id } : {}),
   });
 
