@@ -160,8 +160,9 @@ export async function cycle() {
   }
 
   // 5. Emit to Keeper — always emit what we have, even partial
-  await emit(verified.merged);
   saveState(state);
+  if (state.alert.environment_id) verified.merged.environment_id = state.alert.environment_id;
+  await emit(verified.merged);
 }
 
 if (process.argv.includes("--loop")) {
