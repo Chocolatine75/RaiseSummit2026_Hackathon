@@ -6,6 +6,7 @@
   <title>AEGIS</title>
   <link rel="manifest" href="/manifest.json" />
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <meta name="theme-color" content="#0b1220" />
 </head>
 <body>
@@ -24,6 +25,9 @@
       <p id="question"></p>
       <button id="confirmBtn" hidden>✓ Confirm</button>
     </section>
+
+    <!-- Shelter map — tiles cached by SW on first online view -->
+    <section id="mapWrap"><div id="map"></div></section>
 
     <!-- Feed of everything the agents learned -->
     <section id="feed"></section>
@@ -46,7 +50,7 @@
   <!-- MediaPipe GenAI bundle (offline LLM). The service worker caches this +
        the wasm + the model file, so it all works in airplane mode.
        Verified usage: developers.google.com/edge/mediapipe/solutions/genai/llm_inference/web_js -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-genai/genai_bundle.cjs" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

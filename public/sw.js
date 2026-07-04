@@ -5,7 +5,7 @@
  * cached on the FIRST online load; verify it serves offline before the demo,
  * that's the H8 checkpoint).
  */
-const CACHE = "aegis-v1";
+const CACHE = "aegis-v3";
 const SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", (e) => {
@@ -22,7 +22,11 @@ self.addEventListener("fetch", (e) => {
 
   // Cache-first for: our shell, the model file, and the MediaPipe CDN (bundle + wasm).
   const cacheable =
-    url.origin === location.origin || url.hostname === "cdn.jsdelivr.net";
+    url.origin === location.origin ||
+    url.hostname === "cdn.jsdelivr.net" ||
+    url.hostname === "unpkg.com" ||
+    url.hostname.endsWith("tile.openstreetmap.org") ||
+    url.hostname.endsWith("basemaps.cartocdn.com");
   if (!cacheable) return;
 
   e.respondWith(

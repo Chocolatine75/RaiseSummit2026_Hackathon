@@ -27,7 +27,7 @@ export async function runOrchestrator(ctx) {
     `{"country_task": string, "shelter_task": string, "alert_task": string}`;
 
   const body = {
-    model: "gemini-3.5-flash",
+    model: "gemini-2.5-flash",
     input: prompt,
     store: true,
     ...(prevState.interaction_id ? { previous_interaction_id: prevState.interaction_id } : {}),
@@ -42,7 +42,17 @@ export async function runOrchestrator(ctx) {
   if (!res.ok) throw new Error(`orchestrator ${res.status}: ${await res.text()}`);
   const data = await res.json();
 
-  const text = data.output_text ?? data.outputs?.map(o => o.text ?? "").join("") ?? "";
+  const fromSteps = (data.steps ?? [])
+    .filter(st => st.type === "model_output")
+    .flatMap(st => st.content ?? [])
+    .filter(c => c.type === "text")
+    .map(c => c.text)
+    .join("");
+  const text = fromSteps || data.output_text || "";
+  if (!text) {
+    data.steps?.forEach((s, i) => console.error(`step[${i}]:`, JSON.stringify(s).slice(0, 300)));
+    throw new Error(`orchestrator empty output — check model name / API key`);
+  }
   const tasks = parseJsonLoose(text);
   if (!tasks?.country_task) throw new Error(`orchestrator bad output: ${text.slice(0, 200)}`);
 

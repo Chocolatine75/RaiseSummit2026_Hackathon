@@ -181,7 +181,7 @@ export class SessionDO {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": this.env.GEMINI_API_KEY },
         body: JSON.stringify({
-          model: "gemini-3.5-flash",
+          model: "gemini-2.5-flash",
           input: prompt,
           store: true,
           ...(prevId ? { previous_interaction_id: prevId } : {}),
@@ -196,12 +196,16 @@ export class SessionDO {
         s.interaction_chain_id = data.id;
       }
       const text = extractText(data);
+      console.log("Raw Interactions Text:", text);
       const g = parseJsonLoose(text);
+      console.log("Parsed Interactions JSON:", JSON.stringify(g));
       if (g && g.surface_now) {
         s.guidance.current_instruction_en = g.plain_line_en;
         s.guidance.next_question = g.next_question;
         s.guidance.needs_tap = !!g.needs_tap;
         s.guidance.confirmed = false;
+      } else {
+        console.log("Condition g && g.surface_now failed. g.surface_now =", g?.surface_now);
       }
     } catch (err) {
       // Never let a flaky API kill the loop — surface the raw fact instead.
@@ -219,6 +223,7 @@ export class SessionDO {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": this.env.GEMINI_API_KEY },
       body: JSON.stringify({
+        model: "gemini-2.5-flash",
         contents: [{
           parts: [
             { inline_data: { mime_type, data: image_b64 } },
@@ -246,13 +251,17 @@ function json(obj, status = 200) {
 
 // Interactions API responses expose text as output_text (SDK) or inside outputs;
 // accept both shapes so a field rename in preview doesn't break the demo.
+// Interactions API REST responses carry the reply in steps[] — the model_output
+// step's content[].text (verified against the live API 2026-07-04). output_text
+// is the SDK convenience field; keep it as fallback.
 function extractText(data) {
-  return (
-    data.output_text ??
-    data.outputs?.map((o) => o.text ?? o.content?.parts?.map((p) => p.text).join("") ?? "").join("") ??
-    data.candidates?.[0]?.content?.parts?.[0]?.text ??
-    ""
-  );
+  const fromSteps = (data.steps ?? [])
+    .filter((st) => st.type === "model_output")
+    .flatMap((st) => st.content ?? [])
+    .filter((c) => c.type === "text")
+    .map((c) => c.text)
+    .join("");
+  return fromSteps || data.output_text || "";
 }
 
 function parseJsonLoose(text) {

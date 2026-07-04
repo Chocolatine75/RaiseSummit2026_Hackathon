@@ -39,3 +39,8 @@ footer {
 #demoControls summary { list-style: none; opacity: .4; font-size: 12px; padding: 6px; }
 #demoControls button { display: block; margin-top: 6px; }
 body.offline #card { border-color: #a33; }
+
+#mapWrap { border-radius: 12px; overflow: hidden; height: 220px; border: 1px solid #27406f; }
+#map { height: 100%; width: 100%; }
+.shelter-popup { font-size: 13px; line-height: 1.4; }
+.shelter-popup b { display: block; margin-bottom: 2px; }

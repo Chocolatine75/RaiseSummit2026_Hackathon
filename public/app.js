@@ -1,36 +1,37 @@
 /**
- * AEGIS client — the judges' window and the offline brain.
+ * AEGIS client.
  *
- * Online:  WebSocket to the Keeper → every push is the FULL Situation Object →
- *          render it AND write it to localStorage first (THE line the demo trusts).
- * Offline: WS closes / airplane mode → read the cached object → load Gemma
- *          (MediaPipe LLM Inference, cached by the service worker) → keep
- *          answering Maria via speechSynthesis. No internet anywhere in that path.
+ * Online:  WebSocket → full Situation Object pushed on every change →
+ *          written to localStorage (the handoff line).
+ * Offline: WS closes → cached state stays visible; Ask falls back to HTTP
+ *          (queued in SW if truly unreachable). On-device reasoning lives
+ *          in the mobile app (Gemma 4 + LiteRT-LM).
  */
 
 const SESSION = new URLSearchParams(location.search).get("session") || "demo";
 const CACHE_KEY = `aegis_state_${SESSION}`;
-const MODEL_PATH = "/models/gemma-4-E2B-it-web.task"; // put the downloaded file here
 
 let ws = null;
 let state = null;
 let offline = false;
-let llm = null; // MediaPipe LlmInference instance, created lazily on first offline need
-let spokenInstruction = ""; // avoid re-speaking the same line on every render
+let spokenInstruction = "";
+let map = null;
+let shelterLayer = null;
 
 // ---------- boot ----------
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
+initMap();
 state = readCache();
-if (state) render(); // instant paint from cache — also the restart-persistence beat
+if (state) render(); // instant paint from cache — the restart-persistence beat
 connect();
 
-// ---------- online: WebSocket to the Keeper ----------
+// ---------- WebSocket ----------
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws?session=${SESSION}`);
   ws.onmessage = (msg) => {
     state = JSON.parse(msg.data);
-    writeCache(state); // <— the handoff IS this line
+    writeCache(state);
     setOffline(false);
     render();
   };
@@ -46,15 +47,12 @@ function setOffline(v) {
   offline = v;
   document.body.classList.toggle("offline", v);
   const pill = document.getElementById("net");
-  pill.textContent = v ? "OFFLINE — on-device" : "ONLINE";
+  pill.textContent = v ? "OFFLINE — cached state" : "ONLINE";
   pill.className = `pill ${v ? "offline" : "online"}`;
-  if (v && state) {
-    speak("We're offline now. I still have your situation. Ask me anything.");
-    ensureLlm(); // start loading Gemma immediately, not at first question
-  }
+  if (v && state) speak("We're offline. Last known situation is displayed.");
 }
 
-// ---------- cache (localStorage: small object, synchronous read at boot) ----------
+// ---------- cache ----------
 function writeCache(s) {
   s.network = { ...s.network, last_serialized_to_device: new Date().toISOString() };
   localStorage.setItem(CACHE_KEY, JSON.stringify(s));
@@ -63,7 +61,7 @@ function readCache() {
   try { return JSON.parse(localStorage.getItem(CACHE_KEY)); } catch { return null; }
 }
 
-// ---------- render the Situation Object ----------
+// ---------- render ----------
 function render() {
   if (!state) return;
   document.getElementById("chainId").textContent = shorten(state.interaction_chain_id);
@@ -71,8 +69,8 @@ function render() {
 
   const g = state.guidance || {};
   if (g.current_instruction_en) {
-    document.getElementById("instruction").textContent = g.current_instruction_en;
-    if (!offline && g.current_instruction_en !== spokenInstruction) {
+    setInstruction(g.current_instruction_en);
+    if (g.current_instruction_en !== spokenInstruction) {
       spokenInstruction = g.current_instruction_en;
       speak(g.current_instruction_en);
     }
@@ -81,6 +79,7 @@ function render() {
   document.getElementById("freshness").textContent = state.live_delta?.as_of
     ? `live data as of ${age(state.live_delta.as_of)} ago` : "";
   document.getElementById("confirmBtn").hidden = !g.needs_tap;
+  updateMap(state.live_delta?.shelters);
 
   const feed = document.getElementById("feed");
   feed.innerHTML = "";
@@ -93,16 +92,24 @@ function render() {
   }
 }
 
-// ---------- emit events to the Keeper (never write state directly — the ONE law) ----------
+// ---------- emit ----------
 function emit(type, payload = {}) {
   const event = { type, payload, src: "client", t: new Date().toISOString() };
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify(event));
-  else fetch(`/event?session=${SESSION}`, { method: "POST", body: JSON.stringify(event) }).catch(() => {});
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify(event));
+  } else {
+    // HTTP fallback — works online even when WS is reconnecting
+    fetch(`/event?session=${SESSION}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(event),
+    }).catch(() => {});
+  }
 }
 
 document.getElementById("confirmBtn").onclick = () => emit("user_tap");
 
-// Eyes: photo → Keeper /api/eyes → Gemini vision → sign_read event comes back via WS
+// Eyes: photo → /api/eyes → Gemini vision → sign_read event back via WS
 document.getElementById("camInput").onchange = async (e) => {
   const file = e.target.files[0];
   if (!file) return;
@@ -115,80 +122,69 @@ document.getElementById("camInput").onchange = async (e) => {
   e.target.value = "";
 };
 
-// Ask: online → user_utterance event (Keeper reasons); offline → Gemma on-device
+// Ask: always emits user_utterance — Keeper reasons online, mobile app handles offline
 document.getElementById("askBtn").onclick = ask;
 document.getElementById("askInput").onkeydown = (e) => { if (e.key === "Enter") ask(); };
-async function ask() {
+function ask() {
   const input = document.getElementById("askInput");
   const text = input.value.trim();
   if (!text) return;
   input.value = "";
-  if (!offline) return emit("user_utterance", { text });
-  await askGemma(text);
+  emit("user_utterance", { text });
 }
 
-// Demo controls (hidden behind the "demo" disclosure)
+// Demo controls
 document.querySelectorAll("#demoControls button").forEach((b) => {
   b.onclick = () => {
     const a = b.dataset.demo;
     if (a === "quake") emit("quake", { magnitude: "5+" });
     if (a === "reset") fetch(`/api/reset?session=${SESSION}`, { method: "POST" });
-    if (a === "offline") { try { ws.close(); } catch {} setOffline(true); } // stage backup if airplane mode misbehaves
+    if (a === "offline") { try { ws.close(); } catch {} setOffline(true); }
   };
 });
 
-// ---------- offline brain: Gemma via MediaPipe LLM Inference ----------
-// Verified: developers.google.com/edge/mediapipe/solutions/genai/llm_inference/web_js
-// The CDN genai_bundle.cjs exposes FilesetResolver + LlmInference globally.
-async function ensureLlm() {
-  if (llm) return llm;
-  setInstruction("Loading on-device model…");
-  const genai = await FilesetResolver.forGenAiTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-genai@latest/wasm" // served from SW cache when offline
-  );
-  llm = await LlmInference.createFromOptions(genai, {
-    baseOptions: { modelAssetPath: MODEL_PATH },
-    maxTokens: 512,
-    temperature: 0.4, // guidance, not creativity
-    topK: 40,
-  });
-  setInstruction("On-device model ready. Ask me anything.");
-  return llm;
+// ---------- Leaflet shelter map ----------
+function initMap() {
+  if (map || !window.L) return;
+  map = L.map("map", { zoomControl: true, attributionControl: false })
+    .setView([35.6896, 139.7006], 15);
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    subdomains: "abcd",
+    maxZoom: 19,
+    crossOrigin: true,
+  }).addTo(map);
+  shelterLayer = L.layerGroup().addTo(map);
 }
 
-// The pack prompt — the only novel prompt of the project (runbook §6-D).
-function packPrompt(question) {
-  return `You are AEGIS running offline on a phone during an earthquake in Tokyo. The internet is gone. Below is the last known situation, saved before the connection was lost.
-Rules: (1) Reason ONLY from this data — never invent exits, shelters, or directions not present in it. (2) Give ONE instruction at a time, short enough to follow while walking. (3) Always respect the user's constraints (child, no stairs). (4) State how old the data is, using as_of and last_serialized_to_device. (5) End with one short clarifying question. (6) If the data cannot answer, say so plainly and give the safest general guidance.
-
-SITUATION:
-${JSON.stringify(state)}
-
-USER ASKS: ${question}
-
-YOUR SPOKEN REPLY:`;
-}
-
-async function askGemma(question) {
-  const model = await ensureLlm();
-  setInstruction("…");
-  let full = "";
-  await new Promise((resolve) =>
-    model.generateResponse(packPrompt(question), (part, done) => {
-      full += part;
-      setInstruction(full);
-      if (done) resolve();
+function updateMap(shelters) {
+  if (!map) return;
+  shelterLayer.clearLayers();
+  const valid = (shelters || []).filter(s => s.coordinates?.lat);
+  for (const s of valid) {
+    L.circleMarker([s.coordinates.lat, s.coordinates.lng], {
+      radius: 9,
+      fillColor: s.step_free ? "#6ef0a0" : "#8fb4ff",
+      color: "#0b1220",
+      weight: 2,
+      fillOpacity: 0.9,
     })
-  );
-  speak(full);
+      .bindPopup(`<div class="shelter-popup"><b>${esc(s.name)}</b><br>${esc(s.address)}${s.step_free ? "<br>✓ step-free" : ""}</div>`)
+      .addTo(shelterLayer);
+  }
+  if (valid.length) {
+    map.fitBounds(
+      L.latLngBounds(valid.map(s => [s.coordinates.lat, s.coordinates.lng])),
+      { padding: [24, 24], maxZoom: 15 }
+    );
+  }
 }
 
-// ---------- small helpers ----------
+// ---------- helpers ----------
 function speak(text) {
   try {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = "en-US"; // offline voice must be pre-downloaded on the phone (H0 checklist)
+    u.lang = "en-US";
     speechSynthesis.speak(u);
   } catch { /* silent phones still show the big card */ }
 }
@@ -202,7 +198,7 @@ function esc(s) { const d = document.createElement("div"); d.textContent = s; re
 function fileToB64(file) {
   return new Promise((res) => {
     const r = new FileReader();
-    r.onload = () => res(String(r.result).split(",")[1]); // strip data: prefix
+    r.onload = () => res(String(r.result).split(",")[1]);
     r.readAsDataURL(file);
   });
 }

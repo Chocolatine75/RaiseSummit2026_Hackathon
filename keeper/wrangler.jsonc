@@ -6,6 +6,7 @@
   "name": "aegis-keeper",
   "main": "src/index.js",
   "compatibility_date": "2026-06-01",
+  "workers_dev": true,
 
   // The client PWA and staged pages are served from the same Worker —
   // one deploy gives you app + fake portals on one URL.

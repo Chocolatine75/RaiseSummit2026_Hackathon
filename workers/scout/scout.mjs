@@ -22,8 +22,8 @@ const SESSION   = process.env.SESSION || "demo";
 const COUNTRY   = process.env.COUNTRY || "Japan";
 const CITY      = process.env.CITY || "Tokyo";
 const USER_NAT  = process.env.USER_NATIONALITY || "French";
-const AGENT_TIMEOUT_MS = 15_000;
-const CYCLE_INTERVAL_MS = 30_000;
+const AGENT_TIMEOUT_MS = 90_000;
+const CYCLE_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 hours
 const STATE_FILE = new URL("./scout-state.json", import.meta.url).pathname;
 
 function loadState() {
