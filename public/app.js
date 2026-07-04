@@ -43,23 +43,39 @@ render();
 connect();
 startGeolocation(); // use the phone's REAL position, not a constant
 
-// ---------- real GPS: the app follows where the user actually is ----------
-let lastSentLL = null, heading = null;
+// ---------- real GPS + automatic region entry ----------
+// Like a real app with location permission: when the user's position resolves
+// to a NEW city/region, the app AUTOMATICALLY caches that region's map and warms
+// the on-device assistant in the background — no button, no thought required.
+let lastSentLL = null, heading = null, currentRegion = null;
 function startGeolocation() {
-  if (!navigator.geolocation) { sysLog("No GPS on this device — using station default."); return; }
+  if (!navigator.geolocation) { onRegionEntry(station()); return; } // demo default region
   navigator.geolocation.watchPosition(
     (pos) => {
       const { latitude: lat, longitude: lng, accuracy } = pos.coords;
       if (pos.coords.heading != null && !Number.isNaN(pos.coords.heading)) heading = pos.coords.heading;
-      // Debounce: only tell the Keeper when we've meaningfully moved (>15m).
       if (lastSentLL && distM(lastSentLL, { lat, lng }) < 15) { updateUserMarker(lat, lng); return; }
       lastSentLL = { lat, lng };
       emit("set_location", { lat, lng, accuracy_m: Math.round(accuracy) });
       updateUserMarker(lat, lng);
+      maybeEnterRegion(lat, lng); // ← automatic new-region detection
     },
-    (err) => sysLog(`GPS: ${err.message} — using station default.`),
+    () => onRegionEntry(station()), // permission denied → still prep the demo region
     { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
   );
+}
+
+// A "new region" = moved more than ~2km from the last prepared center. On entry,
+// the backend prep runs automatically (map cache + model warm).
+function maybeEnterRegion(lat, lng) {
+  if (currentRegion && distM(currentRegion, { lat, lng }) < 2000) return;
+  currentRegion = { lat, lng };
+  onRegionEntry({ lat, lng, name: state?.user?.location?.station || "your area" });
+}
+function onRegionEntry() {
+  if (packDone) return;
+  packDone = false;
+  downloadMapPack(); // caches map + warms on-device assistant, shown as one moment
 }
 function updateUserMarker(lat, lng) {
   if (userMarker) userMarker.setLatLng([lat, lng]);
@@ -81,12 +97,12 @@ function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws?session=${SESSION}`);
   ws.onmessage = (msg) => {
-    const wasEmptyDelta = !state?.live_delta?.as_of;
     state = JSON.parse(msg.data);
     writeCache(state); // the handoff IS this line
     setOffline(false);
-    // "New data enters → the map pack downloads" — fires once, on first delta.
-    if (wasEmptyDelta && state.live_delta?.as_of && !packDone) downloadMapPack();
+    // Region prep is GPS-driven (automatic on entry), not delta-driven — see
+    // maybeEnterRegion(). But if we have a location and haven't prepped, do it.
+    if (!packDone && state?.user?.location?.lat) onRegionEntry();
     render();
   };
   ws.onclose = () => { setOffline(true); setTimeout(connect, 3000); };
@@ -162,29 +178,43 @@ function renderMap() {
 
 // Map pack: pre-cache the tile grid around the station so the map survives
 // airplane mode. Fired automatically when the Scout's first live data lands.
+// Region entry → prepare everything for offline: cache the map pack AND warm up
+// the on-device model, shown as one choreographed "getting you ready" moment.
 async function downloadMapPack() {
   packDone = true;
   const st = station();
   const toast = document.getElementById("toast");
+  const title = document.getElementById("toastTitle");
+  const sub = document.getElementById("toastSub");
+  const region = st.name && st.name !== "—" ? st.name : "this area";
   toast.hidden = false;
+  title.textContent = `Preparing ${region} for offline`;
+  sub.textContent = "Downloading map tiles…";
+
   const cache = await caches.open("aegis-tiles");
   const jobs = [];
-  for (const z of [14, 15, 16]) {
+  for (const z of [14, 15, 16, 17]) {
     const c = latLngToTile(st.lat, st.lng, z);
-    const r = z === 16 ? 3 : 2; // wider ring at street zoom
+    const r = z >= 16 ? 3 : 2;
     for (let x = c.x - r; x <= c.x + r; x++)
       for (let y = c.y - r; y <= c.y + r; y++)
         jobs.push(TILE_URL.replace("{z}", z).replace("{x}", x).replace("{y}", y));
   }
   let done = 0;
   await Promise.allSettled(jobs.map(async (u) => {
-    const res = await fetch(u, { mode: "cors" });
-    if (res.ok) await cache.put(u, res);
-    toast.textContent = `⬇ Saving map for offline · ${++done}/${jobs.length}`;
+    try { const res = await fetch(u, { mode: "cors" }); if (res.ok) await cache.put(u, res); } catch {}
+    sub.textContent = `Downloading map · ${++done}/${jobs.length} tiles`;
   }));
-  toast.textContent = "✓ Map saved — works without signal";
-  setTimeout(() => { toast.hidden = true; }, 2500);
-  sysLog(`Map pack cached — ${done} tiles around ${st.name}.`);
+
+  // Warm the on-device model in the background so offline is instant later.
+  sub.textContent = "Preparing on-device assistant…";
+  ensureLlm(true).then(() => {}).catch(() => {});
+
+  title.textContent = `${region} ready for offline`;
+  sub.textContent = `${done} map tiles saved · assistant ready if signal drops`;
+  toast.querySelector(".tspin").style.display = "none";
+  setTimeout(() => { toast.hidden = true; toast.querySelector(".tspin").style.display = ""; }, 2600);
+  sysLog(`Region ${region}: ${done} tiles cached, on-device model warming.`);
 }
 function latLngToTile(lat, lng, z) {
   const n = 2 ** z;
@@ -319,6 +349,8 @@ function render() {
   }
   const loc = state.user?.location;
   setProof("pxGps", loc?.source === "device_gps" ? `GPS ±${loc.accuracy_m ?? "?"}m` : "default", loc?.source === "device_gps");
+  setProof("pxMap", packDone ? "cached" : "—", packDone);
+  setProof("pxModel", modelReady ? "ready" : (packDone ? "warming…" : "—"), modelReady);
 
   // Live agent operations — the "control room" judges asked to see.
   const ops = document.getElementById("ops");
@@ -411,19 +443,30 @@ document.querySelectorAll("#demoRow button").forEach((b) => {
 });
 
 // ---------- offline brain: Gemma 4 E2B via MediaPipe ----------
-async function ensureLlm() {
+let llmLoading = null;
+async function ensureLlm(silent) {
   if (llm) return llm;
-  setInstruction("Loading on-device model…");
-  const genai = await FilesetResolver.forGenAiTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-genai@latest/wasm"
-  );
-  llm = await LlmInference.createFromOptions(genai, {
-    baseOptions: { modelAssetPath: MODEL_PATH },
-    maxTokens: 512, temperature: 0.4, topK: 40,
-  });
-  setInstruction("On-device model ready. Ask me anything.");
-  return llm;
+  if (llmLoading) return llmLoading;
+  llmLoading = (async () => {
+    if (!silent) setInstruction("Loading on-device assistant…");
+    // Verify the model file exists before trying (graceful if not uploaded yet).
+    try { const head = await fetch(MODEL_PATH, { method: "HEAD" }); if (!head.ok) throw new Error("model not deployed"); }
+    catch (e) { if (!silent) setInstruction("On-device model not installed yet."); llmLoading = null; throw e; }
+    const genai = await FilesetResolver.forGenAiTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-genai@latest/wasm"
+    );
+    llm = await LlmInference.createFromOptions(genai, {
+      baseOptions: { modelAssetPath: MODEL_PATH },
+      maxTokens: 512, temperature: 0.4, topK: 40,
+    });
+    modelReady = true;
+    if (!silent) setInstruction("On-device assistant ready.");
+    render();
+    return llm;
+  })();
+  return llmLoading;
 }
+let modelReady = false;
 function packPrompt(question) {
   return `You are AEGIS running offline on a phone during an earthquake in Tokyo. The internet is gone. Below is the last known situation, saved before the connection was lost.
 Rules: (1) Reason ONLY from this data — never invent exits, shelters, or directions not present in it. (2) Give ONE instruction at a time, short enough to follow while walking. (3) Always respect the user's constraints (child, no stairs). (4) State how old the data is, using as_of and last_serialized_to_device. (5) End with one short clarifying question. (6) If the data cannot answer, say so plainly and give the safest general guidance.

@@ -203,14 +203,15 @@ export class SessionDO {
       case "set_location": { // from the phone's real GPS: { lat, lng, accuracy_m, place }
         const p = event.payload || {};
         if (p.lat != null && p.lng != null) {
+          // Reverse-geocode to a REAL place name (free OSM Nominatim, no key).
+          const place = p.place || await this.reverseGeocode(p.lat, p.lng).catch(() => null);
           s.user.location = {
             ...s.user.location,
             lat: p.lat, lng: p.lng,
             accuracy_m: p.accuracy_m ?? null,
             source: "device_gps",
-            ...(p.place ? { station: p.place } : {}),
+            ...(place ? { station: place } : {}),
           };
-          // Re-fetch real shelters + route for the NEW real position if a quake is active.
           if (s.event?.type === "earthquake") {
             const shelters = await this.realShelters(s).catch(() => null);
             if (shelters?.length) { s.live_delta.shelters = shelters; s.live_delta.as_of = t; }
@@ -321,6 +322,19 @@ export class SessionDO {
     await this.logAgent("Scout", "done",
       `Sandbox ${envId ? shortId(envId) : "active"}${prevEnvId ? " (resumed)" : " (new)"} · ${parsed?.notes || "web scan complete"}`,
       { environment_id: envId });
+  }
+
+  // ---------- Reverse geocode: real place name from coordinates (OSM, no key) ----------
+  async reverseGeocode(lat, lng) {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=14`;
+    const res = await fetch(url, { headers: { "User-Agent": "AEGIS-emergency-nav/1.0" } });
+    if (!res.ok) return null;
+    const d = await res.json();
+    const a = d.address || {};
+    // Prefer neighbourhood/suburb → city district, e.g. "Shinjuku, Tokyo".
+    const local = a.neighbourhood || a.suburb || a.quarter || a.city_district || a.town || a.village;
+    const city = a.city || a.state || a.county;
+    return [local, city].filter(Boolean).slice(0, 2).join(", ") || d.name || null;
   }
 
   // ---------- Real walking route: OSRM (real streets, real polyline, no key) ----------

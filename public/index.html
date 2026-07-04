@@ -26,15 +26,19 @@
     <button id="scanBtn"><span>Scan a sign</span></button>
   </div>
 
-  <!-- Floating status pill (top): calm, one glanceable truth -->
-  <div id="statusPill" class="pill online">
+  <!-- Floating status pill (top): brand + calm one-glance truth -->
+  <div id="statusPill" class="online">
+    <span class="brand">AEGIS</span>
     <span class="dot"></span>
     <span id="statusText">Monitoring</span>
     <button id="proofBtn" aria-label="System details">ⓘ</button>
   </div>
 
-  <!-- Map-pack progress toast -->
-  <div id="toast" hidden></div>
+  <!-- Region-entry / offline-prep toast: a designed moment -->
+  <div id="toast" hidden>
+    <div class="tspin"></div>
+    <div class="tbody"><b id="toastTitle">Preparing offline</b><span id="toastSub"></span></div>
+  </div>
 
   <!-- Route banner (nav-app style): shows when a route exists -->
   <div id="routeBanner" hidden>
@@ -70,6 +74,8 @@
         <div><span>Antigravity</span><b id="pxEnv">—</b></div>
         <div><span>QA check</span><b id="pxQA">—</b></div>
         <div><span>Position</span><b id="pxGps">—</b></div>
+        <div><span>Offline map</span><b id="pxMap">—</b></div>
+        <div><span>On-device model</span><b id="pxModel">—</b></div>
       </div>
       <div class="ops-head">Live agent operations</div>
       <div id="ops"></div>
