@@ -88,6 +88,6 @@ export default function MapScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: Colors.background },
   map: { flex: 1, backgroundColor: Colors.background },
 });
