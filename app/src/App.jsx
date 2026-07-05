@@ -46,6 +46,7 @@ export default function App() {
   const recRef = useRef(null);
   const audioRef = useRef(null);
   const spokenRef = useRef("");
+  const voiceRef = useRef({ unlocked: false });
   const wasOffRef = useRef(false);
   const wasQuakeRef = useRef(false);
 
@@ -149,15 +150,18 @@ export default function App() {
       fr: "fr-FR"
     };
     rec.lang = langMap[lang] || "en-US";
-    rec.onstart = () => setListening(true);
+    rec.onstart = () => { voiceRef.current.unlocked = true; setListening(true); };
     // when the tap mic finishes, hand the mic back to the wake-word listener
     rec.onend = () => { setListening(false); if (wakeOnRef.current) { wakeAliveRef.current = true; try { wakeRef.current?.start(); } catch {} } };
-    rec.onerror = () => setListening(false);
+    rec.onerror = (ev) => { setListening(false); if (ev?.error === "not-allowed" || ev?.error === "service-not-allowed") alert("Please allow microphone access, then tap the mic again."); };
     rec.onresult = (e) => {
-      const t = e.results[0]?.[0]?.transcript;
+      // take the best final transcript across results
+      let t = "";
+      for (let i = 0; i < e.results.length; i++) { const r = e.results[i]; if (r[0]?.transcript) t = r[0].transcript; }
+      t = (t || "").trim();
       if (!t) return;
       // OFFLINE: the small on-device model can't speak — mic only does speech→text.
-      // Drop the transcript into the composer so the user sees it and sends; Gemma
+      // Drop the transcript into the composer so the user reviews & sends; Gemma
       // replies in text. ONLINE: full voice — send straight through and speak back.
       if (offline) setAsk(t);
       else handleUserUtterance(t);
@@ -172,7 +176,9 @@ export default function App() {
   // rest of the sentence becomes the question and is answered automatically — no
   // tap. Runs as a separate continuous recognizer that self-restarts (browsers
   // auto-stop on silence). The tap mic stays as a reliable fallback. ──
-  const [wakeOn, setWakeOn] = useState(() => localStorage.getItem("aegis_wake") !== "0");
+  // Wake word is OPT-IN (default off): always-on recognition competes with the
+  // tap mic and is flaky across browsers. The tap mic is the reliable primary.
+  const [wakeOn, setWakeOn] = useState(() => localStorage.getItem("aegis_wake") === "1");
   const [wakeHeard, setWakeHeard] = useState(false);
   const wakeRef = useRef(null);
   const wakeAliveRef = useRef(false);
@@ -182,9 +188,14 @@ export default function App() {
   // Only ONE speech recognizer can hold the mic at a time. Starting the tap mic
   // pauses the always-on wake-word listener; it resumes when the tap mic ends.
   const toggleMic = () => {
-    const rec = recRef.current; if (!rec) return;
-    if (listening) { rec.stop(); }
-    else { try { wakeAliveRef.current = false; wakeRef.current?.stop(); } catch {} try { rec.start(); } catch {} }
+    const rec = recRef.current;
+    if (!rec) { alert("Voice needs Chrome or Safari. Please type your question instead."); return; }
+    if (listening) { try { rec.stop(); } catch {} return; }
+    // free the mic from the wake-word listener, then start — retry once if the
+    // browser is still releasing it (avoids the common InvalidStateError).
+    try { wakeAliveRef.current = false; wakeRef.current?.stop(); } catch {}
+    const start = () => { try { rec.start(); } catch { setTimeout(() => { try { rec.start(); } catch {} }, 250); } };
+    start();
   };
 
   useEffect(() => { localStorage.setItem("aegis_wake", wakeOn ? "1" : "0"); }, [wakeOn]);
@@ -258,7 +269,6 @@ export default function App() {
   };
 
   // speak guidance aloud (real Gemini TTS online, browser TTS offline)
-  const voiceRef = useRef({ unlocked: false });
   useEffect(() => { const u = () => { voiceRef.current.unlocked = true; }; document.addEventListener("pointerdown", u, { once: true }); return () => document.removeEventListener("pointerdown", u); }, []);
   useEffect(() => {
     const t = g.headline || g.current_instruction_en;
