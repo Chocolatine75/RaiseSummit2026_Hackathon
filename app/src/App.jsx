@@ -247,6 +247,7 @@ export default function App() {
 
   const startSos = () => { setSos(true); };
   const active = quake || !!g.current_instruction_en;
+  const hasChat = (state?.environment || []).some((e) => e.en);
 
   if (!entered) {
     return (
@@ -328,21 +329,22 @@ export default function App() {
                       {state?.live_delta?.as_of && <span className="chip-age">updated {age(state.live_delta.as_of)} ago</span>}
                     </div>
 
-                    {!active ? (
+                    {active ? (
+                      <GuidanceCards g={g} r={r} best={best} hospital={hospital} offline={offline} card={card} setCard={setCard} onConfirm={() => emit("user_tap")} />
+                    ) : hasChat ? (
+                      // A conversation is going — drop the idle preamble, let the chat lead.
+                      <div className="idle-mini">{offline ? "On-device assistant" : "AEGIS"} · {state?.user?.location?.station || "Tokyo"}</div>
+                    ) : (
                       <>
                         <div className="idle-title">You're in {state?.user?.location?.station || "Tokyo"}.</div>
                         <div className="idle-sub">AEGIS is listening for earthquake early-warnings, station announcements and evacuation notices — in your language.</div>
                         {/* one seeded example so first-open shows the translate capability */}
-                        {!(state?.environment || []).length && (
-                          <div className="seed-example">
-                            <div className="seed-cap">Example · live translate</div>
-                            <div className="turn"><div className="bubble ja">構内アナウンス：まもなく電車が参ります</div><div className="bubble-label">Station JP</div></div>
-                            <div className="turn"><div className="bubble">Platform announcement: a train is arriving shortly</div><div className="bubble-label">Your language</div></div>
-                          </div>
-                        )}
+                        <div className="seed-example">
+                          <div className="seed-cap">Example · live translate</div>
+                          <div className="turn"><div className="bubble ja">構内アナウンス：まもなく電車が参ります</div><div className="bubble-label">Station JP</div></div>
+                          <div className="turn"><div className="bubble">Platform announcement: a train is arriving shortly</div><div className="bubble-label">Your language</div></div>
+                        </div>
                       </>
-                    ) : (
-                      <GuidanceCards g={g} r={r} best={best} hospital={hospital} offline={offline} card={card} setCard={setCard} onConfirm={() => emit("user_tap")} />
                     )}
 
                     {/* live translate transcript (real PA translations + user/assistant turns) */}

@@ -211,6 +211,17 @@ export class SessionDO {
     switch (event.type) {
       case "quake": // demo control: the earthquake begins
         s.event = { type: "earthquake", magnitude_reported: event.payload?.magnitude || "5+", t0: t };
+        // INSTANT guidance (<1s, deterministic) so the emergency card appears the
+        // moment the ground moves — the shelter/route refine it seconds later.
+        s.guidance = {
+          ...s.guidance,
+          action: "DROP, COVER, HOLD",
+          headline: "Protect your head and hold on until shaking stops",
+          current_instruction_en: "Drop to the floor, take cover under a sturdy table, and hold on. Stay away from windows and heavy objects until the shaking stops.",
+          next_question: "Are you safe where you are?",
+          needs_tap: false,
+          confirmed: false,
+        };
         needsReasoning = true;
         break;
       case "pa_translation": // from Listener: { ja, en }
@@ -333,50 +344,15 @@ export class SessionDO {
     }
     await this.broadcast();
 
-    // Quake just hit → run the whole agent pipeline SERVER-SIDE, logging each
-    // step live so the Agent Ops panel shows it running. This is why the agents
-    // work on the deployed URL with no laptop attached.
+    // Quake just hit → run the whole agent pipeline SERVER-SIDE in the
+    // BACKGROUND (detached). We already broadcast the instant DROP/COVER
+    // guidance above, so the /event POST returns in <1s; the shelter, route
+    // and agent traces stream in over the WebSocket as each lands. This is the
+    // difference between a 2s and a 37s time-to-first-guidance.
     if (event.type === "quake") {
-      await this.logAgent("Keeper", "active", "Earthquake detected — orchestrating response agents in parallel");
-
-      // FAST PATH: if the region was pre-staged on city entry, shelters are
-      // already cached — route immediately (no 25s Maps wait) and refresh
-      // grounding in the background. This is the intended demo flow (arrive in
-      // the city first), and it takes time-to-route from ~40s down to ~8s.
-      const cached = s.live_delta?.shelters?.filter((x) => x.lat != null) || [];
-      if (cached.length) {
-        await this.logAgent("Maps", "done", `Using ${cached.length} pre-cached shelters · best ${cached[0].name}`);
-        // Kick the slow agents off in the background (Listener/hospitals) — don't
-        // block the route on them. Scout: if this is an AFTERSHOCK (sandbox already
-        // exists), the resume is fast and is the key stateful-agent beat, so await
-        // it; on the first quake it's a slow cold spin-up, so background it.
-        this.runListener(s).catch((e) => this.logAgent("Listener", "error", String(e).slice(0, 120)));
-        this.realHospitals(s).then((h) => { if (h?.length) return this.applyHospitals(h); }).catch(() => {});
-        const hasSandbox = await this.state.storage.get("scout_env");
-        if (hasSandbox) {
-          await this.runScout(s).catch((e) => this.logAgent("Scout", "error", String(e).slice(0, 120)));
-        } else {
-          this.runScout(s).catch((e) => this.logAgent("Scout", "error", String(e).slice(0, 120)));
-        }
-        // route now, off the cached shelters
-        await this.handleEvent({ type: "delta_update", payload: { shelters: cached }, src: "cache" });
-      } else {
-        // COLD PATH: nothing pre-cached — run everything concurrently.
-        await this.logAgent("Maps", "active", "Querying Google Maps for evacuation areas & nearby hospitals");
-        const [, , shelters, hospitals] = await Promise.all([
-          this.runListener(s).catch((e) => { this.logAgent("Listener", "error", String(e).slice(0, 120)); }),
-          this.runScout(s).catch((e) => { this.logAgent("Scout", "error", String(e).slice(0, 120)); }),
-          this.realShelters(s).catch((e) => { this.logAgent("Maps", "error", String(e).slice(0, 120)); return null; }),
-          this.realHospitals(s).catch(() => null),
-          reasonPromise,
-        ]);
-        if (hospitals?.length) await this.applyHospitals(hospitals);
-        if (shelters?.length) {
-          const scored = scoreShelters(shelters, s);
-          await this.logAgent("Maps", "done", `Found ${scored.length} real places · best ${scored[0].name} (${scored[0].why?.[0] || "nearest"})`);
-          await this.handleEvent({ type: "delta_update", payload: { shelters: scored }, src: "maps-grounding" });
-        }
-      }
+      // Detach the heavy agent pipeline — the instant guidance already went out.
+      this.runQuakePipeline(s, reasonPromise).catch((e) => this.logAgent("Keeper", "error", String(e).slice(0, 120)));
+      return json({ ok: true, async: true });
     }
 
     // After shelters land (or the user's GPS moves), compute a REAL walking
@@ -416,6 +392,44 @@ export class SessionDO {
       }
     }
     return json({ ok: true });
+  }
+
+  // ---------- Quake response pipeline (runs detached in the background) ----------
+  // The /event POST already returned with instant DROP/COVER guidance; this
+  // streams the shelter, route and agent traces in over the WebSocket.
+  async runQuakePipeline(s, reasonPromise) {
+    await this.logAgent("Keeper", "active", "Earthquake detected — orchestrating response agents in parallel");
+
+    // FAST PATH: region pre-staged on city entry → shelters cached → route now.
+    const cached = s.live_delta?.shelters?.filter((x) => x.lat != null) || [];
+    if (cached.length) {
+      await this.logAgent("Maps", "done", `Using ${cached.length} pre-cached shelters · best ${cached[0].name}`);
+      this.runListener(s).catch((e) => this.logAgent("Listener", "error", String(e).slice(0, 120)));
+      this.realHospitals(s).then((h) => { if (h?.length) return this.applyHospitals(h); }).catch(() => {});
+      const hasSandbox = await this.state.storage.get("scout_env");
+      if (hasSandbox) {
+        await this.runScout(s).catch((e) => this.logAgent("Scout", "error", String(e).slice(0, 120)));
+      } else {
+        this.runScout(s).catch((e) => this.logAgent("Scout", "error", String(e).slice(0, 120)));
+      }
+      await this.handleEvent({ type: "delta_update", payload: { shelters: cached }, src: "cache" });
+    } else {
+      // COLD PATH: nothing pre-cached — run everything concurrently.
+      await this.logAgent("Maps", "active", "Querying Google Maps for evacuation areas & nearby hospitals");
+      const [, , shelters, hospitals] = await Promise.all([
+        this.runListener(s).catch((e) => { this.logAgent("Listener", "error", String(e).slice(0, 120)); }),
+        this.runScout(s).catch((e) => { this.logAgent("Scout", "error", String(e).slice(0, 120)); }),
+        this.realShelters(s).catch((e) => { this.logAgent("Maps", "error", String(e).slice(0, 120)); return null; }),
+        this.realHospitals(s).catch(() => null),
+        reasonPromise,
+      ]);
+      if (hospitals?.length) await this.applyHospitals(hospitals);
+      if (shelters?.length) {
+        const scored = scoreShelters(shelters, s);
+        await this.logAgent("Maps", "done", `Found ${scored.length} real places · best ${scored[0].name} (${scored[0].why?.[0] || "nearest"})`);
+        await this.handleEvent({ type: "delta_update", payload: { shelters: scored }, src: "maps-grounding" });
+      }
+    }
   }
 
   // ---------- Listener: translate the Japanese station PA to the user's language ----------

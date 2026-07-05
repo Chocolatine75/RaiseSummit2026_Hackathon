@@ -47,11 +47,16 @@ await post("/event", { type: "set_location", payload: { lat: 35.6905, lng: 139.7
 s = await get("/api/state");
 check("GPS location accepted", s.user.location.source === "device_gps", `lat=${s.user.location.lat}`);
 
-// 4. Quake → full server-side pipeline
-console.log("\n  … firing quake, waiting for agent pipeline (18s) …\n");
+// 4. Quake → the /event returns instantly (guidance in <1s); the agent
+// pipeline runs detached and streams results in. Poll until the route lands
+// (or 60s), instead of a fixed wait — this reflects the real async flow.
+console.log("\n  … firing quake, polling for the detached pipeline (≤60s) …\n");
 await post("/event", { type: "quake", payload: { magnitude: "5+" }, src: "test" });
-await wait(18000);
-s = await get("/api/state");
+for (let i = 0; i < 60; i++) {
+  await wait(1000);
+  s = await get("/api/state");
+  if (s.route?.coords?.length > 3 && s.scout_environment_id) break;
+}
 
 // 5. Antigravity Scout (real sandbox)
 const scoutDone = (s.agents || []).find(a => a.agent === "Scout" && a.status === "done");
@@ -83,11 +88,14 @@ check("QA agent reported", !!qaDone, qaDone?.detail);
 check("audit status pass", s.audit?.status === "pass", s.audit?.status);
 
 // 11. Sandbox RESUME (second quake)
-console.log("\n  … firing aftershock to test Antigravity resume (14s) …\n");
+console.log("\n  … firing aftershock to test Antigravity resume (poll ≤40s) …\n");
 const env1 = s.scout_environment_id;
 await post("/event", { type: "quake", payload: { magnitude: "aftershock" }, src: "test" });
-await wait(14000);
-s = await get("/api/state");
+for (let i = 0; i < 40; i++) {
+  await wait(1000);
+  s = await get("/api/state");
+  if ((s.agents || []).find(a => a.agent === "Scout" && a.detail?.includes("resumed"))) break;
+}
 const resumed = (s.agents || []).find(a => a.agent === "Scout" && a.detail?.includes("resumed"));
 check("Antigravity sandbox RESUMED (same env)", !!resumed && s.scout_environment_id === env1, `${env1?.slice(0,10)} == ${s.scout_environment_id?.slice(0,10)}`);
 

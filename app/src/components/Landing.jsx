@@ -16,10 +16,11 @@ export default function Landing({ onStart }) {
       </div>
 
       <div className="landing-hero">
-        <h1 className="landing-h1">Calm in Tokyo's<br />next earthquake.</h1>
+        <h1 className="landing-h1">Calm when<br />disaster strikes.</h1>
         <p className="landing-sub">
-          The moment the ground moves, AEGIS translates the warning, finds you a
-          real shelter, and keeps guiding you — even with no signal.
+          Anywhere in the world, the moment danger hits, AEGIS translates the
+          warning, finds you a real shelter, and keeps guiding you — even with
+          no signal.
         </p>
       </div>
 
@@ -32,7 +33,7 @@ export default function Landing({ onStart }) {
       <button className="landing-cta" onClick={onStart}>
         Get started <Icon name="chevronR" size={18} />
       </button>
-      <div className="landing-foot">For visitors in Tokyo · Free · No account</div>
+      <div className="landing-foot">Works worldwide · Free · No account · Fully offline</div>
     </div>
   );
 }
