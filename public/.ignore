@@ -1,0 +1,5 @@
+# Ignore heavy model files inside public assets
+models/
+models/**
+*.task
+*.litertlm

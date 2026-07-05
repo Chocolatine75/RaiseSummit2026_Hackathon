@@ -11,7 +11,11 @@ export default function MapView({ state, active }) {
     if (mapRef.current) return;
     const center = [loc?.lat ?? 35.6896, loc?.lng ?? 139.7006];
     const map = L.map("map", { zoomControl: false, attributionControl: false }).setView(center, 16);
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18 }).addTo(map);
+    // CartoDB dark_all: a clean, label-light dark basemap made for navigation —
+    // no tourist POI clutter, so the route and shelters are the only signal.
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      subdomains: "abcd", maxZoom: 20,
+    }).addTo(map);
     layersRef.current.user = L.marker(center, {
       icon: L.divIcon({ className: "user-pin", html: '<div class="core"></div>', iconSize: [18, 18] }),
     }).addTo(map);

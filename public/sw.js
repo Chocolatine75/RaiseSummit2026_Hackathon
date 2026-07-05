@@ -22,7 +22,9 @@ self.addEventListener("fetch", (e) => {
   if (["/ws", "/event"].includes(url.pathname) || url.pathname.startsWith("/api/")) return;
 
   const isHeavy = url.pathname.startsWith("/models/") ||
-    url.hostname === "cdn.jsdelivr.net" || url.hostname === "tile.openstreetmap.org";
+    url.hostname === "cdn.jsdelivr.net" ||
+    url.hostname.endsWith("basemaps.cartocdn.com") ||
+    url.hostname === "tile.openstreetmap.org";
 
   if (url.origin === location.origin && !isHeavy) {
     // Network-first for app code (html + hashed assets).

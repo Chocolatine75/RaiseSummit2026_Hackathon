@@ -13,6 +13,7 @@ export function useAegis() {
   const [offline, setOffline] = useState(false);
   const wsRef = useRef(null);
   const packedRef = useRef(false);
+  const forcedRef = useRef(false); // demo "Go offline" pins us offline (no reconnect)
   const [regionPrep, setRegionPrep] = useState(null); // {title, sub, done}
 
   const emit = useCallback((type, payload = {}) => {
@@ -30,6 +31,7 @@ export function useAegis() {
       const ws = new WebSocket(`${proto}://${location.host}/ws?session=${SESSION}`);
       wsRef.current = ws;
       ws.onmessage = (m) => {
+        if (forcedRef.current) return; // pinned offline for the demo
         const s = JSON.parse(m.data);
         s.network = { ...s.network, last_serialized_to_device: new Date().toISOString() };
         localStorage.setItem(CACHE_KEY, JSON.stringify(s));
@@ -37,7 +39,7 @@ export function useAegis() {
         setOffline(false);
         if (!packedRef.current && s?.user?.location?.lat) prepareRegion(s.user.location);
       };
-      ws.onclose = () => { setOffline(true); if (alive) setTimeout(connect, 3000); };
+      ws.onclose = () => { setOffline(true); if (alive && !forcedRef.current) setTimeout(connect, 3000); };
       ws.onerror = () => ws.close();
     };
     connect();
@@ -69,7 +71,8 @@ export function useAegis() {
     try {
       const cache = await caches.open("aegis-tiles");
       const jobs = [];
-      const TILE = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+      // Cache the same CartoDB dark tiles the map renders (subdomain 'a').
+      const TILE = "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png";
       for (const z of [14, 15, 16, 17]) {
         const c = ll2tile(loc.lat, loc.lng, z), r = z >= 16 ? 3 : 2;
         for (let x = c.x - r; x <= c.x + r; x++) for (let y = c.y - r; y <= c.y + r; y++)
@@ -85,8 +88,9 @@ export function useAegis() {
     } catch { setRegionPrep(null); }
   }
 
-  const forceOffline = useCallback(() => { wsRef.current?.close(); setOffline(true); }, []);
-  return { state, offline, emit, regionPrep, session: SESSION, forceOffline };
+  const forceOffline = useCallback(() => { forcedRef.current = true; wsRef.current?.close(); setOffline(true); }, []);
+  const goOnline = useCallback(() => { forcedRef.current = false; setOffline(false); }, []);
+  return { state, offline, emit, regionPrep, session: SESSION, forceOffline, goOnline };
 }
 
 // geo helpers

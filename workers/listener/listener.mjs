@@ -29,7 +29,7 @@ let jaBuf = "", enBuf = "";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const session = await ai.live.connect({
-  model: "gemini-3.5-live-translate-preview",
+  model: "gemini-2.5-flash",
   config: {
     responseModalities: [Modality.AUDIO],
     inputAudioTranscription: {},   // gives us the Japanese source text

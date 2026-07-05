@@ -1,0 +1,6 @@
+# Exclude heavy model files from wrangler deploy asset uploads
+../public/models/**
+public/models/**
+**/models/**
+*.task
+*.litertlm

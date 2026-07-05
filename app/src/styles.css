@@ -5,22 +5,22 @@
    Type: system stack tuned to Display weights so headers feel like iOS/Material,
    not a webpage. Mono only for machine truth (IDs, coords). */
 :root {
-  --bg: #070b10;
-  --ink: #eef3f8;
-  --ink-soft: #b7c4d4;
-  --dim: #6f8296;
-  --glass: rgba(14, 20, 28, 0.66);
-  --glass-hi: rgba(22, 30, 40, 0.82);
-  --hair: rgba(255, 255, 255, 0.09);
-  --safe: #19e08a;
-  --safe-ink: #06371f;
-  --amber: #ffbf3f;
-  --amber-ink: #2e2200;
-  --alert: #ff5a6e;
-  --sky: #3d9bff;
-  --sheet: #0b1119;
-  --shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-  --r: 20px;
+  --bg: #05070a;          /* true near-black, not washed navy */
+  --ink: #f5f8fc;
+  --ink-soft: #aeb9c7;
+  --dim: #63707f;
+  --glass: rgba(9, 12, 17, 0.72);
+  --glass-hi: rgba(13, 17, 24, 0.9);
+  --hair: rgba(255, 255, 255, 0.07);
+  --safe: #33c9b7;        /* unified with engine-room teal "safe / go here" */
+  --safe-ink: #052422;
+  --amber: #f5b301;       /* unified JMA warning amber */
+  --amber-ink: #241a00;
+  --alert: #ff5a5f;
+  --sky: #2f9bff;
+  --sheet: #0c1016;
+  --shadow: 0 12px 44px rgba(0, 0, 0, 0.6);
+  --r: 22px;
 }
 * { box-sizing: border-box; margin: 0; -webkit-tap-highlight-color: transparent; }
 html, body { height: 100%; overscroll-behavior: none; background: var(--bg); }
@@ -35,12 +35,14 @@ button { font-family: inherit; cursor: pointer; color: inherit; }
 /* ---------- hero: full-bleed map / camera ---------- */
 .view { position: absolute; inset: 0; display: none; }
 .view.active { display: block; }
-#map { height: 100%; width: 100%; background: #0a1017; }
-.leaflet-container { font: inherit; background: #0a1017; }
-/* Premium dark cartography — desaturate + deepen OSM into a nav-app basemap. */
-.leaflet-tile {
-  filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.92) saturate(0.55) sepia(0.12);
-}
+#map { height: 100%; width: 100%; background: #05070a; }
+.leaflet-container { font: inherit; background: #05070a; }
+/* CartoDB dark_all is already a clean nav basemap — tune it slightly darker so
+   the green route and shelters are the only things that draw the eye. */
+.leaflet-tile { filter: brightness(0.82) contrast(1.05) saturate(0.9); }
+/* dim the whole basemap so guidance pops (map is context, not content) */
+#map::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(5,7,10,.55) 100%); z-index: 400; }
 .leaflet-control-attribution { display: none; }
 .leaflet-popup-content-wrapper { background: var(--glass-hi); color: var(--ink);
   backdrop-filter: blur(20px); border: 1px solid var(--hair); border-radius: 14px; box-shadow: var(--shadow); }
@@ -280,3 +282,862 @@ body.offline #freshness::before { background: var(--amber); }
 .evt .ja { color: var(--dim); font-size: 12px; margin-top: 2px; }
 .tab { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 11px; border: 0; background: none; color: var(--dim); font-size: 10.5px; font-weight: 700; }
 .tab .ti { font-size: 21px; opacity: .55; } .tab.active { color: var(--ink); } .tab.active .ti { opacity: 1; }
+
+/* ===== refined sheet: instruction-as-hero, purposeful idle, hidden dev chrome ===== */
+.sheet .eyebrow { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.chip { font-size: 11px; font-weight: 700; letter-spacing: .02em; padding: 5px 11px; border-radius: 999px; }
+.chip.calm { background: rgba(0,229,138,.12); color: var(--safe); }
+.chip.danger { background: rgba(255,77,94,.14); color: var(--alert); }
+.sheet.alert { box-shadow: 0 -16px 50px rgba(0,0,0,.6), inset 0 2px 0 var(--alert); }
+.eyebrow .ago { font-size: 11px; color: var(--dim); font-weight: 600; }
+
+.idle { padding: 2px 0 4px; }
+.idle-line { font-size: 20px; font-weight: 700; letter-spacing: -.02em; color: var(--ink); }
+.idle-sub { margin-top: 8px; font-size: 14px; line-height: 1.5; color: var(--ink-soft); max-width: 34ch; }
+
+.sheet .instruction { font-size: 25px; font-weight: 700; line-height: 1.24; letter-spacing: -.025em; color: var(--ink); }
+.sheet .freshness { display: none; }
+
+.proof { margin-top: 18px; border-top: 1px solid var(--hair); padding-top: 14px; }
+.proof-title { font-size: 10.5px; font-weight: 800; letter-spacing: .14em; color: var(--dim); text-transform: uppercase; margin-bottom: 12px; }
+
+.proofBtn.on { background: rgba(0,229,138,.16); color: var(--safe); }
+
+/* refined markers: real map pins, not emoji clutter */
+.user-pin .core { width: 16px; height: 16px; background: var(--sky);
+  border: 3px solid #fff; box-shadow: 0 0 0 5px rgba(47,155,255,.22), 0 2px 8px rgba(0,0,0,.6); }
+.shelter-pin { font-size: 20px; }
+
+/* type polish across the app */
+.rb-eta { letter-spacing: -.03em; }
+.demoRow { margin-top: 14px; }
+.demoRow button { background: transparent; border: 1px solid var(--hair); color: var(--dim); font-weight: 600; }
+
+/* ---------- Simulated Camera View (Desktop / No Permissions) ---------- */
+.simulated-cam {
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(circle at center, #1b2530 0%, #06090d 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+.simulated-cam::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.04), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.04));
+  background-size: 100% 4px, 6px 100%;
+  pointer-events: none;
+  opacity: 0.15;
+}
+.signboard-mock {
+  background: #fffbef;
+  border: 4px solid #ff4d5e;
+  border-radius: 12px;
+  padding: 24px;
+  text-align: center;
+  max-width: 290px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  border-top: 16px solid #ff4d5e;
+  transform: rotate(-1deg);
+  animation: float 6s ease-in-out infinite;
+}
+.signboard-header {
+  font-size: 11px;
+  font-weight: 800;
+  color: #ff4d5e;
+  letter-spacing: 0.12em;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+}
+.signboard-body {
+  margin-bottom: 8px;
+}
+.signboard-ja {
+  font-size: 28px;
+  font-weight: 900;
+  color: #05070a;
+  margin-bottom: 6px;
+  letter-spacing: -0.01em;
+}
+.signboard-en {
+  font-size: 16px;
+  font-weight: 700;
+  color: #63707f;
+}
+.signboard-footer {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #aeb9c7;
+  margin-top: 16px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  padding-top: 8px;
+  letter-spacing: 0.02em;
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50% { transform: translateY(-8px) rotate(1deg); }
+}
+
+/* ---------- Responsive Dual-Pane Desktop Layout & Phone Frame ---------- */
+.container-split {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  background: #030406;
+  overflow: hidden;
+}
+
+/* Left Panel: Backplane Console */
+.backplane-panel {
+  flex: 1;
+  max-width: 480px;
+  background: #080b0f;
+  border-right: 1px solid var(--hair);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.backplane-header {
+  padding: 20px;
+  border-bottom: 1px solid var(--hair);
+  background: #05070a;
+  flex-shrink: 0;
+}
+.bp-logo {
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  color: var(--safe);
+}
+.bp-subtitle {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: var(--dim);
+  margin-top: 4px;
+  text-transform: uppercase;
+}
+.backplane-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+.bp-controls {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--hair);
+}
+
+/* Right Panel: Phone Frame */
+.phone-wrapper {
+  flex: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 42%, #0d1219 0%, #050709 55%, #030406 100%);
+  position: relative;
+  height: 100%;
+}
+/* ambient floor glow under the device so the stage reads as deliberate */
+.phone-wrapper::before {
+  content: ""; position: absolute; bottom: 8%; left: 50%; transform: translateX(-50%);
+  width: 360px; height: 90px; border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(0,229,138,.10), transparent 70%);
+  filter: blur(24px); pointer-events: none;
+}
+/* "live device" caption under the phone */
+.phone-wrapper::after {
+  content: "LIVE · connected to the AEGIS Keeper"; position: absolute; bottom: 34px; left: 0; right: 0;
+  text-align: center; font-size: 10.5px; font-weight: 700; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--dim); pointer-events: none;
+}
+
+.phone-bezel {
+  width: 400px;
+  height: 820px;
+  border-radius: 50px;
+  background: var(--bg);
+  border: 12px solid #2d333f;
+  box-shadow: 0 25px 65px rgba(0, 0, 0, 0.85), inset 0 0 4px rgba(255, 255, 255, 0.2);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+/* Speaker & Island */
+.phone-speaker {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60px;
+  height: 4px;
+  background: #111;
+  border-radius: 2px;
+  z-index: 1000;
+}
+.phone-island {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 110px;
+  height: 30px;
+  background: #000;
+  border-radius: 20px;
+  z-index: 1000;
+}
+
+/* Mock iOS Status Bar */
+.phone-screen-bar {
+  height: 44px;
+  background: transparent;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0 32px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  z-index: 999;
+  pointer-events: none;
+  flex-shrink: 0;
+}
+.phone-time {
+  font-family: -apple-system, SF Pro Text, sans-serif;
+  font-size: 13.5px;
+  letter-spacing: -0.01em;
+}
+.phone-icons {
+  display: flex;
+  gap: 5px;
+  font-size: 11px;
+}
+
+/* Home Indicator */
+.phone-home-indicator {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 130px;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.35);
+  border-radius: 3px;
+  z-index: 1000;
+}
+
+/* Ensure inner app fits bezel screen perfectly */
+.phone-bezel .app {
+  width: 100%;
+  height: calc(100% - 44px);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Mobile-first override: screen sizes under 800px */
+@media (max-width: 799px) {
+  .backplane-panel {
+    display: none !important;
+  }
+  .container-split {
+    background: transparent !important;
+    width: 100%;
+    height: 100dvh;
+  }
+  .phone-wrapper {
+    flex: 1;
+    background: transparent !important;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+  }
+  .phone-bezel {
+    width: 100% !important;
+    height: 100% !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+  }
+  .phone-speaker,
+  .phone-island,
+  .phone-screen-bar,
+  .phone-home-indicator {
+    display: none !important;
+  }
+  .phone-bezel .app {
+    height: 100% !important;
+    width: 100% !important;
+  }
+}
+
+/* ---------- Command & Pitch Control Panel Tabs ---------- */
+.bp-tabs {
+  display: flex;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--hair);
+  border-radius: 12px;
+  padding: 3px;
+  margin-top: 14px;
+  gap: 4px;
+}
+.bp-tabs button {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-radius: 9px;
+  padding: 8px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--dim);
+  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  cursor: pointer;
+}
+.bp-tabs button:hover {
+  color: var(--ink);
+}
+.bp-tabs button.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+
+/* Geocoding Warp Panel styling */
+.demo-warp-box {
+  animation: fadeIn 0.3s ease-out;
+}
+.warp-input-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.warp-input-row input {
+  flex: 1;
+  background: rgba(7, 11, 16, 0.6);
+  border: 1px solid var(--hair);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 13.5px;
+  color: var(--ink);
+  font-family: inherit;
+}
+.warp-input-row input:focus {
+  outline: none;
+  border-color: rgba(25, 224, 138, 0.4);
+}
+.warp-input-row button {
+  background: var(--safe);
+  color: var(--safe-ink);
+  border: none;
+  border-radius: 12px;
+  padding: 0 18px;
+  font-size: 13.5px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.warp-input-row button:active {
+  transform: scale(0.97);
+}
+.warp-status-text {
+  font-size: 12px;
+  color: var(--amber);
+  margin-top: 6px;
+  font-weight: 600;
+}
+.preset-warps-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+.preset-warp-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--hair);
+  border-radius: 11px;
+  padding: 12px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  text-align: left;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+.preset-warp-btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: var(--ink);
+}
+.preset-warp-btn:active {
+  transform: translateY(1px);
+}
+
+/* VC Pitch / Blueprint Layout */
+.blueprint-box {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: fadeIn 0.3s ease-out;
+  padding-bottom: 20px;
+}
+.blueprint-section {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--hair);
+  border-radius: 14px;
+  padding: 14px;
+}
+.bp-title-sm {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  color: var(--safe);
+  margin-bottom: 8px;
+}
+.bp-text-sm {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+.bp-text-sm b {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+/* Listening Voice Mic Pulsing */
+.micBtn.live {
+  background: var(--alert) !important;
+  border-color: var(--alert) !important;
+  color: #fff !important;
+  animation: micpulse 1s infinite;
+}
+
+/* ---------- Chat View (Handheld Phone tab) ---------- */
+.chatView {
+  position: absolute;
+  inset: 0 0 calc(55px + env(safe-area-inset-bottom)) 0;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  z-index: 680;
+  animation: fadeIn 0.25s ease-out;
+}
+.chatHeader {
+  padding: 16px;
+  background: var(--sheet);
+  border-bottom: 1px solid var(--hair);
+  text-align: center;
+}
+.chatTitle {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.chatSubtitle {
+  font-size: 10px;
+  color: var(--dim);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 2px;
+}
+.chatMessages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.chatEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+  text-align: center;
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.chatMessageRow {
+  display: flex;
+  gap: 8px;
+  max-width: 85%;
+}
+.chatMessageRow.user {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+.chatMessageRow.aegis {
+  align-self: flex-start;
+}
+.chatAvatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(0, 229, 138, 0.15);
+  border: 1px solid rgba(0, 229, 138, 0.3);
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.chatBubble {
+  border-radius: 16px;
+  padding: 10px 14px;
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: var(--ink);
+  position: relative;
+}
+.chatMessageRow.user .chatBubble {
+  background: #1977f2; /* gorgeous iMessage blue */
+  border-top-right-radius: 4px;
+}
+.chatMessageRow.aegis .chatBubble {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--hair);
+  border-top-left-radius: 4px;
+}
+.chatJaText {
+  font-size: 11px;
+  color: var(--dim);
+  margin-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  padding-top: 4px;
+}
+.chatAskRow {
+  padding: 10px 16px 14px;
+  background: var(--sheet);
+  border-top: 1px solid var(--hair);
+  margin-top: 0 !important;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================================
+   ICON SYSTEM + FINAL DESIGN LAYER  (last-wins over earlier rules)
+   One coherent line-icon set replaces every emoji. Everything below
+   is deliberately specific so the app reads as a shipped product,
+   not an AI demo. Direction: calm authority under panic — Japanese
+   wayfinding signage vernacular, one evac-green accent.
+   ============================================================ */
+.icn { display: inline-block; vertical-align: middle; flex: 0 0 auto; }
+
+/* tab bar — SVG icons, no emoji, precise weight shift on active */
+.tabbar { padding-top: 6px; }
+.tab { color: var(--dim); gap: 4px; font-size: 10.5px; font-weight: 650; letter-spacing: .01em; }
+.tab .icn { opacity: .5; transition: opacity .18s, transform .18s; }
+.tab.active { color: var(--ink); }
+.tab.active .icn { opacity: 1; color: var(--safe); }
+.tab:active .icn { transform: scale(.9); }
+
+/* info / operations toggle */
+.proofBtn { display: grid; place-items: center; font-size: 0; }
+.proofBtn .icn { color: var(--ink-soft); }
+.proofBtn.on { background: rgba(0,229,138,.16); }
+.proofBtn.on .icn { color: var(--safe); }
+
+/* mic */
+.micBtn { display: grid; place-items: center; color: var(--ink-soft); font-size: 0; }
+.micBtn.live { color: var(--alert); border-color: rgba(255,77,94,.5); background: rgba(255,77,94,.1); }
+
+/* route banner shelter mark */
+.rb-icon { color: var(--safe); }
+.rb-icon .icn { color: var(--safe); }
+
+/* status chip: icon + label sit together */
+.chip { display: inline-flex; align-items: center; gap: 6px; }
+.chip .icn { flex: 0 0 auto; }
+
+/* toast check */
+.tdone { display: grid; place-items: center; width: 20px; height: 20px; color: var(--safe); }
+
+/* ---- emergency sheet: the instruction is the immovable hero ---- */
+.sheet { display: flex; flex-direction: column; }
+.hero { padding: 2px 0 2px; }
+.sheet .instruction {
+  font-size: 26px; font-weight: 750; line-height: 1.22; letter-spacing: -.025em;
+  color: var(--ink); text-wrap: balance;
+}
+.sheet.alert .instruction { color: #fff; }
+.sheet .qRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+.sheet .question { font-size: 14px; color: var(--ink-soft); line-height: 1.4; flex: 1; }
+.confirmBtn {
+  flex: 0 0 auto; background: var(--safe); color: var(--safe-ink); border: 0;
+  font-weight: 750; font-size: 14px; padding: 11px 20px; border-radius: 13px; letter-spacing: -.01em;
+}
+.confirmBtn:active { transform: scale(.97); }
+
+/* when active, keep the ask row + ops below the hero; hero never clips */
+.sheet .askRow { margin-top: 14px; }
+
+/* ---- desktop backplane: no emoji, quiet chrome ---- */
+.bp-logo { display: flex; align-items: center; gap: 9px; }
+.bp-logo .icn { color: var(--safe); }
+.bp-action {
+  width: 100%; margin-top: 12px; padding: 10px; border-radius: 9px;
+  background: rgba(255,255,255,.06); border: 1px solid var(--hair);
+  color: var(--ink); font-weight: 700; font-size: 11.5px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+}
+.bp-action .icn { color: var(--amber); }
+.preset-warp-btn { display: inline-flex; align-items: center; gap: 7px; }
+.preset-warp-btn .icn { color: var(--dim); }
+.demoRow button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.demoRow .icn { color: currentColor; opacity: .8; }
+
+/* ---- phone status bar: real signal + battery glyphs ---- */
+.phone-icons { display: flex; align-items: center; gap: 6px; color: var(--ink); }
+.phone-icons .sb-5g { font-size: 11px; font-weight: 650; letter-spacing: .02em; }
+
+/* ---- chat avatar shield ---- */
+.chatAvatar { display: grid; place-items: center; color: var(--safe); }
+
+/* ---- simulated signboard header: no emoji ---- */
+.signboard-header { letter-spacing: .12em; }
+
+/* ============================================================
+   OFFLINE HANDOFF — the signature moment. Network dies mid-crisis,
+   situation state survives on the edge, Gemma takes over. Amber is
+   the "on-device / degraded but alive" signal, distinct from the
+   green (safe/online) and red (active emergency) accents.
+   ============================================================ */
+.handoff {
+  position: absolute; inset: 0; z-index: 1200; overflow: hidden;
+  background: radial-gradient(ellipse at 50% 40%, rgba(20,14,0,.94), rgba(3,4,6,.98));
+  backdrop-filter: blur(6px); display: grid; place-items: center;
+  animation: hoIn .32s cubic-bezier(.2,.8,.2,1);
+}
+.handoff.leaving { animation: hoOut .42s cubic-bezier(.4,0,.2,1) forwards; }
+@keyframes hoIn { from { opacity: 0; } }
+@keyframes hoOut { to { opacity: 0; transform: scale(1.015); } }
+
+/* an amber scanline sweeping down — reads as "system re-homing to edge" */
+.handoff-sweep {
+  position: absolute; left: 0; right: 0; height: 40%; top: -40%;
+  background: linear-gradient(180deg, transparent, rgba(255,176,32,.14), transparent);
+  animation: hoSweep 1.6s cubic-bezier(.4,0,.2,1) infinite;
+}
+@keyframes hoSweep { to { top: 100%; } }
+
+.handoff-core { position: relative; z-index: 1; width: 84%; max-width: 320px; text-align: center; }
+.handoff-glyph {
+  width: 62px; height: 62px; margin: 0 auto 22px; border-radius: 18px;
+  display: grid; place-items: center; color: var(--amber);
+  background: rgba(255,176,32,.1); border: 1px solid rgba(255,176,32,.35);
+  box-shadow: 0 0 30px rgba(255,176,32,.18); transition: all .4s;
+}
+.handoff-glyph.ok { color: var(--safe); background: rgba(0,229,138,.1);
+  border-color: rgba(0,229,138,.4); box-shadow: 0 0 34px rgba(0,229,138,.22); }
+
+.handoff-beat { min-height: 58px; animation: beatIn .34s ease; }
+@keyframes beatIn { from { opacity: 0; transform: translateY(6px); } }
+.handoff-label { font-size: 19px; font-weight: 750; letter-spacing: -.02em; color: var(--ink); }
+.handoff-sub { margin-top: 6px; font-size: 13px; color: var(--ink-soft); line-height: 1.4; }
+
+/* the proof: the state that outlived the disconnect, pinned on screen */
+.handoff-state {
+  margin-top: 20px; display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12.5px; color: var(--ink-soft);
+  background: rgba(255,255,255,.05); border: 1px solid var(--hair);
+  padding: 9px 14px; border-radius: 999px;
+}
+.handoff-state b { color: var(--ink); font-weight: 700; }
+.hs-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--amber);
+  box-shadow: 0 0 10px var(--amber); animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .4; } }
+
+.handoff-steps { margin-top: 24px; display: flex; gap: 6px; justify-content: center; }
+.handoff-steps span { width: 26px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.12); transition: background .3s; }
+.handoff-steps span.on { background: var(--amber); }
+
+/* ---- amber ON-DEVICE mode: the whole app shifts accent once offline ---- */
+.app.offline .statusPill { color: var(--amber); }
+.app.offline .statusPill .dot { background: var(--amber); box-shadow: 0 0 12px var(--amber); }
+.app.offline .chip.calm,
+.app.offline .chip.danger { background: rgba(255,176,32,.14); color: var(--amber); }
+.app.offline .chip .icn { color: var(--amber); }
+.app.offline .sheet { box-shadow: 0 -16px 50px rgba(0,0,0,.6), inset 0 2px 0 rgba(255,176,32,.55); }
+.app.offline .tab.active .icn { color: var(--amber); }
+.app.offline .confirmBtn { background: var(--amber); color: var(--amber-ink); }
+.app.offline .rb-icon .icn,
+.app.offline .rb-eta b { color: var(--amber); }
+.app.offline .leaflet-tile { filter: brightness(0.7) contrast(1.05) saturate(0.5) sepia(0.18); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   AEGIS · REDESIGN FROM SCRATCH  (v2 — overrides everything above)
+   Direction: "civic emergency instrument, not an app."
+   Grounded in Japan's real disaster-response visual language:
+     · JMA Earthquake Early Warning amber  → alert / warning
+     · Tokyo transit wayfinding legibility  → calm, generous, high-contrast
+     · Seismograph drum trace               → the backend's heartbeat
+   Deliberately NOT the neon-green-on-black AI default.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  /* ink — warm near-black, never pure #000 */
+  --ink-900: #0e1116;
+  --ink-850: #12161d;
+  --ink-800: #171c25;
+  --ink-700: #1e2530;
+  --hair-2:  rgba(255,255,255,.06);
+  --hair-3:  rgba(255,255,255,.10);
+
+  /* text */
+  --tx-hi:  #eef2f7;
+  --tx-mid: #a2adbb;
+  --tx-lo:  #6a7686;
+
+  /* meaning-carrying accents (only two) */
+  --alert: #f5b301;   /* JMA amber — warning / active emergency */
+  --alert-ink: #241a00;
+  --go:    #33c9b7;   /* calm teal — safe / proceed / go here (NOT neon green) */
+  --go-ink: #052422;
+  --bad:   #ff5a5f;   /* structural danger only */
+
+  --font: "Inter", -apple-system, "SF Pro Text", system-ui, sans-serif;
+  --mono: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* ── the pitch stage: phone (user) left · engine room (backend) right ── */
+.stage {
+  display: grid; grid-template-columns: minmax(360px, 440px) 1fr;
+  width: 100vw; height: 100vh; height: 100dvh; overflow: hidden;
+  background:
+    radial-gradient(1200px 600px at 20% -10%, #141b26 0%, transparent 60%),
+    var(--ink-900);
+  color: var(--tx-hi); font-family: var(--font);
+}
+@media (max-width: 900px) { .stage { grid-template-columns: 1fr; } .stage .engine-pane { display: none; } }
+
+/* ═══════════ ENGINE ROOM (backend) ═══════════ */
+.engine-pane { position: relative; padding: 48px 48px 30px; display: flex; flex-direction: column;
+  border-left: 1px solid var(--hair-2); min-width: 0; overflow: hidden; }
+.engine { display: flex; flex-direction: column; height: 100%; max-width: 760px; margin: 0 auto; width: 100%; }
+
+.engine-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 8px; }
+.engine-kicker { font-size: 11px; font-weight: 700; letter-spacing: .22em; text-transform: uppercase; color: var(--tx-lo); }
+.engine-title { font-size: 30px; font-weight: 800; letter-spacing: -.03em; margin-top: 6px; color: var(--tx-hi); }
+.engine-mode { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 650;
+  color: var(--tx-mid); font-family: var(--mono); background: var(--ink-800);
+  border: 1px solid var(--hair-2); padding: 8px 13px; border-radius: 10px; }
+.emode-dot { width: 8px; height: 8px; border-radius: 50%; }
+.emode-dot.live { background: var(--go); box-shadow: 0 0 12px var(--go); }
+.emode-dot.amber { background: var(--alert); box-shadow: 0 0 12px var(--alert); }
+
+.engine-graph { width: 100%; flex: 1; min-height: 0; margin: 4px 0; overflow: visible; }
+.wire { stroke: var(--hair-3); stroke-width: .4; transition: stroke .3s, stroke-width .3s; }
+.wire.on { stroke: var(--go); stroke-width: .8; filter: drop-shadow(0 0 2px var(--go)); }
+.engine.off .wire.on { stroke: var(--alert); filter: drop-shadow(0 0 2px var(--alert)); }
+
+.pulse { color: var(--go); }
+.pulse.error { color: var(--bad); }
+.pulse.warn { color: var(--alert); }
+.engine.off .pulse { color: var(--alert); }
+
+.node-ring { fill: none; stroke: var(--hair-3); stroke-width: .5; transition: all .35s; }
+.node-core { fill: var(--ink-700); stroke: var(--tx-lo); stroke-width: .5; transition: all .35s; }
+.node.lit .node-core { fill: var(--go); stroke: var(--go); }
+.node.lit .node-ring { stroke: var(--go); stroke-opacity: .5; }
+.node.lit.done .node-core { fill: var(--go); }
+.node.lit.error .node-core { fill: var(--bad); stroke: var(--bad); }
+.node.lit.warn .node-core { fill: var(--alert); stroke: var(--alert); }
+.engine.off .node.lit .node-core { fill: var(--alert); stroke: var(--alert); }
+.breathe { animation: breathe 1.8s ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: .55; transform: scale(1.08); transform-origin: center; } }
+
+.engine-legend { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 14px 0; }
+.leg { display: flex; flex-direction: column; gap: 3px; padding: 10px 11px; border-radius: 11px;
+  background: var(--ink-850); border: 1px solid var(--hair-2); transition: all .3s; }
+.leg.lit { background: rgba(51,201,183,.08); border-color: rgba(51,201,183,.35); }
+.engine.off .leg.lit { background: rgba(245,179,1,.08); border-color: rgba(245,179,1,.35); }
+.leg-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--tx-lo); transition: all .3s; }
+.leg.lit .leg-dot { background: var(--go); box-shadow: 0 0 10px var(--go); }
+.engine.off .leg.lit .leg-dot { background: var(--alert); box-shadow: 0 0 10px var(--alert); }
+.leg-name { font-size: 12.5px; font-weight: 750; letter-spacing: -.01em; color: var(--tx-hi); }
+.leg-sub { font-size: 10px; color: var(--tx-lo); font-family: var(--mono); letter-spacing: -.02em; }
+
+.engine-ticker { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 13px;
+  background: var(--ink-850); border: 1px solid var(--hair-2); font-size: 13.5px; min-height: 50px; }
+.tick-agent { flex: 0 0 auto; font-family: var(--mono); font-size: 11px; font-weight: 700; letter-spacing: .04em;
+  padding: 4px 9px; border-radius: 7px; background: rgba(51,201,183,.14); color: var(--go); text-transform: uppercase; }
+.tick-agent.error { background: rgba(255,90,95,.15); color: var(--bad); }
+.tick-agent.warn { background: rgba(245,179,1,.15); color: var(--alert); }
+.tick-detail { color: var(--tx-mid); line-height: 1.4; }
+.tick-detail.idle { color: var(--tx-lo); }
+
+/* ═══════════ USER SIDE: phone pane (v2) ═══════════ */
+.phone-pane { display: flex; align-items: center; justify-content: center; position: relative;
+  padding: 30px; background:
+    radial-gradient(600px 400px at 50% 30%, #10151d 0%, transparent 70%); }
+.phone-pane::after { content: "USER"; position: absolute; top: 22px; left: 30px;
+  font-size: 10px; font-weight: 800; letter-spacing: .28em; color: var(--tx-lo); }
+
+/* the agent's decision: why this shelter beat the others */
+.verdict { margin-top: 14px; }
+.verdict-why { display: flex; flex-wrap: wrap; gap: 7px; }
+.whychip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 650;
+  color: var(--go); background: rgba(51,201,183,.12); border: 1px solid rgba(51,201,183,.28);
+  padding: 6px 11px; border-radius: 9px; letter-spacing: -.01em; }
+.whychip .icn { color: var(--go); }
+.app.offline .whychip { color: var(--alert); background: rgba(245,179,1,.12); border-color: rgba(245,179,1,.3); }
+.app.offline .whychip .icn { color: var(--alert); }
+
+/* ═══════════ pitch control bar (engine pane footer) ═══════════ */
+.pitch-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--hair-2); flex-wrap: wrap; }
+.pb-group { display: flex; gap: 8px; flex-wrap: wrap; }
+.pb-btn { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 650;
+  color: var(--tx-mid); background: var(--ink-800); border: 1px solid var(--hair-3);
+  padding: 10px 15px; border-radius: 11px; transition: all .18s; letter-spacing: -.01em; }
+.pb-btn:hover { color: var(--tx-hi); border-color: var(--tx-lo); transform: translateY(-1px); }
+.pb-btn .icn { color: var(--tx-lo); }
+.pb-btn.primary { background: rgba(245,179,1,.14); border-color: rgba(245,179,1,.4); color: var(--alert); }
+.pb-btn.primary .icn { color: var(--alert); }
+.pb-btn.ghost { background: transparent; }
+.pb-model { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-family: var(--mono);
+  color: var(--tx-mid); }
+.pb-model-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tx-lo); }
+.pb-model-dot.ready { background: var(--go); box-shadow: 0 0 10px var(--go); }
+.pb-model-dot.loading { background: var(--alert); box-shadow: 0 0 10px var(--alert); animation: pulse 1.2s infinite; }
+.pb-warm { margin-left: 4px; font-size: 11px; font-weight: 700; color: var(--go); background: rgba(51,201,183,.14);
+  border: 0; padding: 4px 9px; border-radius: 7px; }
+
+/* ═══════════ JA government push (Earthquake Early Warning) ═══════════ */
+.qalert-wrap { position: absolute; top: 0; left: 0; right: 0; z-index: 1100;
+  padding: 10px 10px 0; pointer-events: none; }
+.qalert { pointer-events: auto; cursor: pointer;
+  background: rgba(20,24,31,.92); backdrop-filter: blur(30px) saturate(1.4);
+  border: 1px solid rgba(245,179,1,.4); border-radius: 20px; padding: 14px 16px;
+  box-shadow: 0 16px 44px rgba(0,0,0,.6); animation: pushDown .5s cubic-bezier(.2,.9,.2,1);
+  transition: border-color .4s; }
+.qalert.translated { border-color: rgba(51,201,183,.4); }
+@keyframes pushDown { from { opacity: 0; transform: translateY(-24px) scale(.97); } }
+.qalert-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.qalert-src { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 750;
+  color: var(--amber); letter-spacing: -.01em; }
+.qalert.translated .qalert-src { color: var(--safe); }
+.qalert-src .icn { color: currentColor; }
+.qalert-now { font-size: 11px; color: var(--dim); font-weight: 600; }
+.qalert-title { font-size: 17px; font-weight: 800; letter-spacing: -.02em; color: var(--ink); margin-bottom: 3px; }
+.qalert-body { font-size: 13.5px; line-height: 1.45; color: var(--ink-soft); }
+.qalert-title.ja, .qalert-body.ja { font-family: "Hiragino Sans", "Yu Gothic", sans-serif; }
+.qalert-cta { margin-top: 11px; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; font-weight: 700; color: var(--safe); }
+.qalert-cta .icn { color: var(--safe); }
+.qalert-orig { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--hair);
+  font-size: 11px; color: var(--dim); line-height: 1.4;
+  font-family: "Hiragino Sans", "Yu Gothic", sans-serif; }

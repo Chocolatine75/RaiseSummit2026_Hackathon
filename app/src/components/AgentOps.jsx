@@ -14,8 +14,8 @@ export default function AgentOps({ state, offline }) {
   );
 
   return (
-    <details className="proof">
-      <summary>System status · agent operations</summary>
+    <div className="proof">
+      <div className="proof-title">System status · agent operations</div>
 
       <div className="proof-grid">
         {cell("Reasoning", offline ? "Gemma 4 E2B" : "Gemini 3.5 Flash")}
@@ -47,6 +47,6 @@ export default function AgentOps({ state, offline }) {
           </div>
         ))}
       </div>
-    </details>
+    </div>
   );
 }

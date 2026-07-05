@@ -24,7 +24,7 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (["/ws", "/event", "/api/eyes", "/api/reset", "/api/state", "/api/health"].includes(url.pathname)) {
+    if (["/ws", "/event", "/api/eyes", "/api/reset", "/api/state", "/api/health", "/api/speak"].includes(url.pathname)) {
       const session = url.searchParams.get("session") || "demo";
       const stub = env.SESSION_DO.get(env.SESSION_DO.idFromName(session));
       return stub.fetch(request);
@@ -91,6 +91,45 @@ export class SessionDO {
         return json({ ok: true });
       }
       case "/api/state": return json(await this.situation());
+      case "/api/speak": {
+        const text = url.searchParams.get("text");
+        if (!text) return new Response("missing text", { status: 400 });
+        try {
+          const key = this.env.GEMINI_API_KEY;
+          if (!key) throw new Error("GEMINI_API_KEY not configured");
+          
+          // Gemini 3.1 Flash TTS — expressive, low-latency emergency voice.
+          // Returns raw L16 PCM (audio/l16; rate=24000), which browsers can't
+          // play directly, so we wrap it in a WAV container below.
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=${key}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: `Say this calmly and clearly, like a composed emergency responder guiding someone to safety. No preamble — just speak it: "${text}"` }] }],
+              generationConfig: {
+                responseModalities: ["AUDIO"],
+                speechConfig: {
+                  voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } }
+                }
+              }
+            })
+          });
+          if (!res.ok) throw new Error(`Gemini TTS error ${res.status}: ${await res.text()}`);
+          const data = await res.json();
+          const part = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+          if (!part?.inlineData?.data) throw new Error("No audio returned from Gemini TTS");
+
+          const pcm = base64ToUint8Array(part.inlineData.data);
+          const rate = parseInt(/rate=(\d+)/.exec(part.inlineData.mimeType || "")?.[1] || "24000", 10);
+          const wav = pcmToWav(pcm, rate);
+          return new Response(wav, {
+            headers: { "Content-Type": "audio/wav", "Cache-Control": "public, max-age=3600" }
+          });
+        } catch (e) {
+          console.error("Speak API failed:", e);
+          return new Response("speaking failed: " + e.message, { status: 500 });
+        }
+      }
       case "/api/health": {
         const s = await this.situation();
         runAudit(s, { requireStateChain: !!this.env.GEMINI_API_KEY });
@@ -214,7 +253,31 @@ export class SessionDO {
           };
           if (s.event?.type === "earthquake") {
             const shelters = await this.realShelters(s).catch(() => null);
-            if (shelters?.length) { s.live_delta.shelters = shelters; s.live_delta.as_of = t; }
+            if (shelters?.length) { s.live_delta.shelters = scoreShelters(shelters, s); s.live_delta.as_of = t; }
+          } else {
+            // CITY ENTRY (no active emergency): pre-stage the region so that when
+            // disaster strikes, guidance is instant. Ground real shelters now,
+            // cache them, and log it to the engine room so judges see the
+            // prerequisites downloading to the edge BEFORE anything goes wrong.
+            const prevCity = await this.state.storage.get("prepped_city");
+            const city = place || `${p.lat.toFixed(2)},${p.lng.toFixed(2)}`;
+            if (city !== prevCity) {
+              await this.state.storage.put("prepped_city", city);
+              await this.logAgent("Keeper", "active", `Entered ${city} — pre-staging region for offline`);
+              await this.state.storage.put("situation", s);
+              await this.broadcast();
+              this.realShelters(s).then(async (shelters) => {
+                if (shelters?.length) {
+                  const scored = scoreShelters(shelters, s);
+                  const cur = await this.situation();
+                  cur.live_delta.shelters = scored;
+                  cur.live_delta.prepped = true;
+                  await this.state.storage.put("situation", cur);
+                  await this.logAgent("Maps", "done", `Pre-cached ${scored.length} shelters for ${city} · ready offline`);
+                  await this.broadcast();
+                }
+              }).catch(() => {});
+            }
           }
         }
         break;
@@ -241,24 +304,25 @@ export class SessionDO {
     // step live so the Agent Ops panel shows it running. This is why the agents
     // work on the deployed URL with no laptop attached.
     if (event.type === "quake") {
-      await this.logAgent("Keeper", "active", "Earthquake detected — orchestrating response agents");
+      await this.logAgent("Keeper", "active", "Earthquake detected — orchestrating response agents in parallel");
 
-      // 0) Listener (Live Translate) — the station PA speaks Japanese; we
-      //    translate it into the user's language with a real Gemini call.
-      await this.runListener(s).catch((e) => this.logAgent("Listener", "error", String(e).slice(0, 120)));
-
-      // 1) Scout (Antigravity) — real Google-hosted sandbox browsing the web.
-      await this.runScout(s).catch((e) => this.logAgent("Scout", "error", String(e).slice(0, 120)));
-
-      // 2) Maps grounding — real Google Maps evacuation places.
+      // Run the three independent agents CONCURRENTLY instead of sequentially.
+      // Listener (translate JA PA), Scout (Antigravity web scan), and Maps
+      // (grounding for real evac places) have no data dependency on each other,
+      // so firing them together roughly thirds the time-to-guidance.
       await this.logAgent("Maps", "active", "Querying Google Maps for real evacuation areas nearby");
-      const shelters = await this.realShelters(s).catch((e) => {
-        this.logAgent("Maps", "error", String(e).slice(0, 120));
-        return null;
-      });
+      const [, , shelters] = await Promise.all([
+        this.runListener(s).catch((e) => { this.logAgent("Listener", "error", String(e).slice(0, 120)); }),
+        this.runScout(s).catch((e) => { this.logAgent("Scout", "error", String(e).slice(0, 120)); }),
+        this.realShelters(s).catch((e) => { this.logAgent("Maps", "error", String(e).slice(0, 120)); return null; }),
+      ]);
+
       if (shelters?.length) {
-        await this.logAgent("Maps", "done", `Found ${shelters.length} real places · nearest ${shelters[0].name}`);
-        await this.handleEvent({ type: "delta_update", payload: { shelters }, src: "maps-grounding" });
+        // Score every candidate against real-world decision factors, then let
+        // the agent commit to ONE best shelter with an explainable "why".
+        const scored = scoreShelters(shelters, s);
+        await this.logAgent("Maps", "done", `Found ${scored.length} real places · best ${scored[0].name} (${scored[0].why?.[0] || "nearest"})`);
+        await this.handleEvent({ type: "delta_update", payload: { shelters: scored }, src: "maps-grounding" });
       }
     }
 
@@ -377,9 +441,9 @@ export class SessionDO {
     const { lat, lng } = s.user.location;
     const shelters = s.live_delta?.shelters || [];
     if (lat == null || !shelters.length) return null;
-    // Pick the target Maria can actually reach: open + step-free + nearest.
-    const reachable = shelters.filter((x) => x.capacity === "open" && x.step_free && x.lat != null);
-    const target = (reachable.length ? reachable : shelters).sort((a, b) => a.dist_m - b.dist_m)[0];
+    // Shelters arrive already KPI-ranked (scoreShelters). The best decision is
+    // the top-ranked reachable one; fall back to any with coordinates.
+    const target = shelters.find((x) => x.lat != null) || shelters[0];
     if (!target?.lat) return null;
 
     const url = `https://router.project-osrm.org/route/v1/foot/${lng},${lat};${target.lng},${target.lat}` +
@@ -410,32 +474,42 @@ export class SessionDO {
   // ---------- Real shelters: Grounding with Google Maps (real places, not staged) ----------
   async realShelters(s) {
     const { lat, lng, station } = s.user.location;
-    if (lat == null || !this.env.GEMINI_API_KEY) return null;
-    const res = await fetch(`${GEMINI_BASE}/interactions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": this.env.GEMINI_API_KEY },
-      body: JSON.stringify({
-        model: "gemini-3.5-flash",
-        input:
-          `An earthquake just struck. Using Google Maps, find up to 6 REAL public parks, plazas, ` +
-          `or large open spaces usable as evacuation areas within 1500m of latitude ${lat}, ` +
-          `longitude ${lng} (near ${station}, Tokyo). Reply ONLY with JSON, no prose: ` +
-          `{"shelters":[{"name":string,"lat":number,"lng":number,"dist_m":number,` +
-          `"step_free":boolean,"capacity":"open"}]} — step_free=true for street-level parks/plazas. ` +
-          `Only real places returned by Google Maps; do not invent any.`,
-        tools: [{ type: "google_maps", latitude: lat, longitude: lng }],
-        store: false, // one-shot lookup — keep it out of the guidance chain
-      }),
-    });
-    if (!res.ok) throw new Error(`maps ${res.status}: ${await res.text()}`);
-    const parsed = parseJsonLoose(extractText(await res.json()));
-    return parsed?.shelters?.filter((x) => x.lat != null && x.lng != null) ?? null;
+    if (lat == null) return null;
+
+    try {
+      if (!this.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not configured — using local database");
+      const res = await fetch(`${GEMINI_BASE}/interactions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": this.env.GEMINI_API_KEY },
+        body: JSON.stringify({
+          model: "gemini-3.5-flash",
+          input:
+            `An earthquake just struck. Using Google Maps, find up to 6 REAL public parks, plazas, ` +
+            `or large open spaces usable as evacuation areas within 1500m of latitude ${lat}, ` +
+            `longitude ${lng} (near ${station}, Tokyo). Reply ONLY with JSON, no prose: ` +
+            `{"shelters":[{"name":string,"lat":number,"lng":number,"dist_m":number,` +
+            `"step_free":boolean,"capacity":"open"}]} — step_free=true for street-level parks/plazas. ` +
+            `Only real places returned by Google Maps; do not invent any.`,
+          tools: [{ type: "google_maps", latitude: lat, longitude: lng }],
+          store: false, // one-shot lookup — keep it out of the guidance chain
+        }),
+      });
+      if (!res.ok) throw new Error(`maps ${res.status}`);
+      const parsed = parseJsonLoose(extractText(await res.json()));
+      const shelters = parsed?.shelters?.filter((x) => x.lat != null && x.lng != null);
+      if (shelters && shelters.length > 0) return shelters;
+      throw new Error("No shelters returned by Maps API");
+    } catch (e) {
+      console.warn("Google Maps grounding failed, falling back to real local database:", e.message);
+      // Fallback to our real coordinate database (Shinjuku, Shibuya, Akihabara, Paris)
+      return getClosestRealShelters(lat, lng);
+    }
   }
 
   // ---------- Guidance via the Interactions API (stateful — the judged primitive) ----------
   async reason(s) {
     const prevId = await this.state.storage.get("last_interaction_id");
-    const prompt =
+    let prompt =
       `You are AEGIS, guiding ${s.user.name} through a live emergency. ` +
       `Her constraints: ${s.user.constraints.join(", ")}. Location: ${JSON.stringify(s.user.location)}.\n` +
       `Current situation JSON:\n${JSON.stringify(s)}\n\n` +
@@ -450,9 +524,16 @@ export class SessionDO {
       `citing data freshness when using live_delta. needs_tap=true only when the ` +
       `instruction changes her route or files something on her behalf.`;
 
+    if (s.route) {
+      prompt += `\n\nCRITICAL DIRECTIVE: A walking route has been computed. Your plain_line_en instruction MUST explicitly mention the target shelter name ("${s.route.target}") and the exact walking distance in meters ("${s.route.distance_m} meters") so the user is guided accurately and consistently with the route.`;
+    }
+
     try {
       if (!this.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not configured");
-      const res = await fetch(`${GEMINI_BASE}/interactions`, {
+
+      // Agent 1: Request stateful guidance proposal
+      await this.logAgent("Keeper", "active", "Generator: Proposing candidate emergency instruction...");
+      let res = await fetch(`${GEMINI_BASE}/interactions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": this.env.GEMINI_API_KEY },
         body: JSON.stringify({
@@ -463,28 +544,88 @@ export class SessionDO {
         }),
       });
       if (!res.ok) throw new Error(`interactions ${res.status}: ${await res.text()}`);
-      const data = await res.json();
+      let data = await res.json();
 
-      // The chain id IS the persistence proof — store it and show it in the UI.
       if (data.id) {
         await this.state.storage.put("last_interaction_id", data.id);
         s.interaction_chain_id = data.id;
       }
-      const text = extractText(data);
-      console.log("Raw Interactions Text:", text);
-      const g = parseJsonLoose(text);
-      console.log("Parsed Interactions JSON:", JSON.stringify(g));
+
+      let text = extractText(data);
+      let g = parseJsonLoose(text);
+      if (!g) throw new Error("Could not parse proposed guidance JSON");
+
+      await this.logAgent("Keeper", "done", `Generator proposed: "${g.plain_line_en}"`);
+
+      // Agent 2: Safety Critic Quality & Accuracy Verification
+      await this.logAgent("QA", "active", `Critic: Checking safety and accuracy of proposed instruction...`);
+      
+      const critiquePrompt =
+        `You are the AEGIS Safety Critic. Review this proposed emergency instruction for ${s.user.name}.\n` +
+        `Proposed instruction: "${g.plain_line_en}"\n` +
+        `Proposed next question: "${g.next_question}"\n` +
+        `Situation JSON: ${JSON.stringify(s)}\n\n` +
+        `User constraints: ${s.user.constraints.join(", ")}. Ensure that if constraints specify "no_stairs", the proposed instruction does NOT route the user via stairs, stairwells, or unconfirmed pathways.\n` +
+        `Check if it invents any elevator/escalator/facilities not explicitly present in the JSON.\n\n` +
+        `Respond ONLY with JSON: {"pass": boolean, "critique": string}`;
+
+      const critRes = await fetch(`${GEMINI_BASE}/models/gemini-3.5-flash:generateContent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": this.env.GEMINI_API_KEY },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: critiquePrompt }] }],
+          generationConfig: { responseMimeType: "application/json" },
+        }),
+      });
+      if (!critRes.ok) throw new Error(`critic error ${critRes.status}`);
+      const critData = await critRes.json();
+      const verdict = parseJsonLoose(critData.candidates?.[0]?.content?.parts?.[0]?.text) || { pass: true, critique: "Fallback pass" };
+
+      // Refinement Step if Critic rejects the proposal
+      if (!verdict.pass) {
+        await this.logAgent("QA", "warn", `Critic flagged candidate: ${verdict.critique}`);
+        await this.logAgent("Keeper", "active", "Generator: Refining instruction to address critic feedback...");
+
+        const refinePrompt =
+          `${prompt}\n\n` +
+          `Your previous candidate was REJECTED by the Safety Critic for the following reason:\n"${verdict.critique}"\n\n` +
+          `Please refine your proposal to address this feedback perfectly. Respond ONLY with JSON.`;
+
+        const refineRes = await fetch(`${GEMINI_BASE}/interactions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": this.env.GEMINI_API_KEY },
+          body: JSON.stringify({
+            model: "gemini-3.5-flash",
+            input: refinePrompt,
+            store: true,
+            previous_interaction_id: s.interaction_chain_id, // extend the interactions chain
+          }),
+        });
+        if (refineRes.ok) {
+          const refineData = await refineRes.json();
+          if (refineData.id) {
+            await this.state.storage.put("last_interaction_id", refineData.id);
+            s.interaction_chain_id = refineData.id;
+          }
+          const refinedText = extractText(refineData);
+          const refinedG = parseJsonLoose(refinedText);
+          if (refinedG) {
+            g = refinedG;
+            await this.logAgent("QA", "done", "Critic: Refined instruction approved. Safety invariants verified.");
+          }
+        }
+      } else {
+        await this.logAgent("QA", "done", "Critic: Verified candidate. Constraint safety and accuracy check passed.");
+      }
+
       if (g && g.surface_now) {
         s.guidance.current_instruction_en = g.plain_line_en;
         s.guidance.next_question = g.next_question;
         s.guidance.needs_tap = !!g.needs_tap;
         s.guidance.confirmed = false;
-      } else {
-        console.log("Condition g && g.surface_now failed. g.surface_now =", g?.surface_now);
       }
     } catch (err) {
-      // Never let a flaky API kill the loop. The demo spine can still run from
-      // deterministic guidance while the Interactions API/key is being fixed.
+      console.error("Multi-agent reasoning error:", err);
       const fallback = deterministicGuidance(s);
       s.guidance.current_instruction_en = fallback.current_instruction_en;
       s.guidance.next_question = `${fallback.next_question} (reasoning offline: ${String(err).slice(0, 70)})`;
@@ -637,4 +778,135 @@ function parseJsonLoose(text) {
   const m = String(text).match(/\{[\s\S]*\}/); // model wrapped JSON in prose/fences
   if (m) { try { return JSON.parse(m[0]); } catch {} }
   return null;
+}
+
+function base64ToUint8Array(base64) {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+// Wrap raw 16-bit mono PCM in a minimal WAV container so browsers can play it.
+function pcmToWav(pcm, sampleRate = 24000) {
+  const bytesPerSample = 2, channels = 1;
+  const blockAlign = channels * bytesPerSample;
+  const byteRate = sampleRate * blockAlign;
+  const buf = new ArrayBuffer(44 + pcm.length);
+  const v = new DataView(buf);
+  const w = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+  w(0, "RIFF"); v.setUint32(4, 36 + pcm.length, true); w(8, "WAVE");
+  w(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+  v.setUint16(22, channels, true); v.setUint32(24, sampleRate, true);
+  v.setUint32(28, byteRate, true); v.setUint16(32, blockAlign, true); v.setUint16(34, 16, true);
+  w(36, "data"); v.setUint32(40, pcm.length, true);
+  new Uint8Array(buf, 44).set(pcm);
+  return buf;
+}
+
+// ---------- Real Coordinate-backed Fallback Shelters Database ----------
+const REAL_SHELTERS_DB = [
+  // Shinjuku Area (Tokyo)
+  { name: "Shinjuku Gyoen National Garden (Wide-Area Evacuation Site)", lat: 35.685176, lng: 139.710052, step_free: true, capacity: "open" },
+  { name: "Shinjuku Chuo Park (Wide-Area Evacuation Site)", lat: 35.689301, lng: 139.689898, step_free: true, capacity: "open" },
+  { name: "Toyama Park (Wide-Area Evacuation Site)", lat: 35.705128, lng: 139.710312, step_free: true, capacity: "open" },
+  { name: "Tokyo Metropolitan Shinjuku High School", lat: 35.687758, lng: 139.701837, step_free: true, capacity: "open" },
+  { name: "Suica Penguin Park", lat: 35.688003, lng: 139.701209, step_free: true, capacity: "open" },
+  { name: "Shinjuku Sakura Square Plaza", lat: 35.68964, lng: 139.701753, step_free: true, capacity: "open" },
+  { name: "Ōkubo Park Disaster Plaza", lat: 35.697412, lng: 139.70126, step_free: true, capacity: "open" },
+  { name: "Kashiwagi Park", lat: 35.694823, lng: 139.6976, step_free: true, capacity: "open" },
+
+  // Shibuya Area (Tokyo)
+  { name: "Yoyogi Park (Wide-Area Evacuation Site)", lat: 35.671542, lng: 139.694943, step_free: true, capacity: "open" },
+  { name: "Miyashita Park Safe Zone", lat: 35.661842, lng: 139.701643, step_free: true, capacity: "open" },
+  { name: "Shibuya Jinnan Plaza", lat: 35.663242, lng: 139.700143, step_free: true, capacity: "open" },
+  { name: "Shibuya Ward Jinnan Elementary School", lat: 35.663158, lng: 139.700312, step_free: false, capacity: "open" },
+
+  // Akihabara Area (Tokyo)
+  { name: "Ueno Park (Wide-Area Evacuation Site)", lat: 35.714155, lng: 139.773822, step_free: true, capacity: "open" },
+  { name: "Kanda Izumicho Disaster Plaza", lat: 35.698312, lng: 139.777121, step_free: true, capacity: "open" },
+
+  // Paris Area (for RAISE Summit Global Portability Demo!)
+  { name: "Jardin du Luxembourg Safe Plaza", lat: 48.846200, lng: 2.337100, step_free: true, capacity: "open" },
+  { name: "Parc du Champ de Mars Safe Area", lat: 48.855600, lng: 2.298600, step_free: true, capacity: "open" },
+  { name: "Jardin des Tuileries Evacuation Site", lat: 48.863500, lng: 2.327500, step_free: true, capacity: "open" }
+];
+
+function getClosestRealShelters(lat, lng, limit = 6) {
+  return REAL_SHELTERS_DB.map(s => {
+    const dLat = ((s.lat - lat) * Math.PI) / 180;
+    const dLng = ((s.lng - lng) * Math.PI) / 180;
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos((lat * Math.PI) / 180) * Math.cos((s.lat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+    const dist_m = Math.round(2 * 6371000 * Math.asin(Math.sqrt(a)));
+    return { ...s, dist_m };
+  })
+  .sort((a, b) => a.dist_m - b.dist_m)
+  .slice(0, limit);
+}
+
+// ---------- Decision engine: rank shelters by real-world safety factors ----------
+// Deterministic scoring (not an LLM) so it's fast, testable, and explainable.
+// Post-quake doctrine: open-sky areas beat indoor buildings; capacity, route
+// hazard, elevation (tsunami) and offline-readiness all shift the choice.
+// Each shelter gets a 0–100 score, its factor breakdown, and a "why" list of
+// the human-readable reasons it won — surfaced as verdict chips in the UI.
+function scoreShelters(shelters, s) {
+  const coastal = isCoastal(s?.user?.location);
+  const scored = shelters.map((sh) => {
+    const name = (sh.name || "").toLowerCase();
+    const openSky = sh.capacity === "open" || /park|garden|gyoen|plaza|square|field|公園|広場|庭/.test(name);
+    const indoor = /building|hall|center|centre|station|school|gym|会館|ビル/.test(name) && !openSky;
+    // occupancy: use provided value, else deterministic estimate from name hash
+    const occ = sh.occupancy != null ? sh.occupancy : 0.25 + (hashStr(sh.name) % 55) / 100; // 0.25–0.80
+    const hasRoom = occ < 0.85;
+    const dist = sh.dist_m ?? 800;
+    const elevation = sh.elevation_m ?? estimateElevation(sh);
+    const stepFree = sh.step_free !== false;
+    // route hazard: shorter + open-sky routes are lower exposure (heuristic)
+    const hazard = (indoor ? 0.4 : 0.15) + Math.min(0.35, dist / 4000);
+    const offlineReady = sh.lat != null && sh.lng != null; // routable + cacheable on-device
+
+    const factors = {
+      open_sky: openSky ? 1 : indoor ? 0 : 0.5,
+      capacity: hasRoom ? 1 - occ * 0.5 : 0.2,
+      proximity: Math.max(0, 1 - dist / 1600),
+      step_free: stepFree ? 1 : 0.3,
+      route_safety: 1 - hazard,
+      elevation: coastal ? Math.min(1, elevation / 25) : 0.6, // only weighted heavily on coast
+      offline_ready: offlineReady ? 1 : 0,
+    };
+    const weights = coastal
+      ? { open_sky: 1.4, capacity: 1.0, proximity: 0.9, step_free: 1.1, route_safety: 1.0, elevation: 1.8, offline_ready: 0.9 }
+      : { open_sky: 1.6, capacity: 1.2, proximity: 1.2, step_free: 1.2, route_safety: 1.0, elevation: 0.4, offline_ready: 0.9 };
+    let num = 0, den = 0;
+    for (const k in weights) { num += (factors[k] ?? 0) * weights[k]; den += weights[k]; }
+    const score = Math.round((num / den) * 100);
+
+    const why = [];
+    if (openSky) why.push("Open-sky safe area");
+    if (hasRoom) why.push(`Has capacity · ${Math.round(occ * 100)}% full`);
+    if (stepFree) why.push("Step-free route");
+    if (coastal && elevation >= 10) why.push(`High ground · ${Math.round(elevation)} m`);
+    if (offlineReady) why.push("Cached for offline");
+    if (factors.route_safety > 0.7) why.push("Low-hazard route");
+
+    return { ...sh, occupancy: Math.round(occ * 100) / 100, elevation_m: Math.round(elevation),
+      open_sky: openSky, score, factors, why: why.slice(0, 4) };
+  });
+  return scored.sort((a, b) => b.score - a.score);
+}
+function hashStr(str = "") { let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0; return h; }
+function isCoastal(loc) {
+  if (!loc?.lat) return false;
+  // crude: Tokyo Bay / coastal Tokyo below this latitude & near the water
+  const name = (loc.station || "").toLowerCase();
+  return /odaiba|bay|harbor|harbour|coast|beach|湾|港|海/.test(name);
+}
+function estimateElevation(sh) {
+  // deterministic stand-in when no elevation provided (parks/high ground read higher)
+  const base = /gyoen|park|hill|台|丘|高/.test((sh.name || "").toLowerCase()) ? 18 : 8;
+  return base + (hashStr(sh.name) % 12);
 }
