@@ -33,6 +33,7 @@ export default function App() {
   const [gemmaStatus, setGemmaStatus] = useState("dormant"); // dormant, loading, ready, error
   const [gemmaProgress, setGemmaProgress] = useState(0);
   const [gemmaError, setGemmaError] = useState("");
+  const [voiceNotice, setVoiceNotice] = useState("");
   const gemmaInferenceRef = useRef(null);
 
   const g = state?.guidance || {};
@@ -65,18 +66,22 @@ export default function App() {
     setGemmaStatus("loading");
     setGemmaProgress(20);
     try {
-      const genai = window.tasksGenAI;
+      const genai = window.GenAI;
       if (!genai) {
-        throw new Error("MediaPipe TasksGenAI not loaded. Ensure network or scripts are correct.");
+        throw new Error("MediaPipe GenAI not loaded. Ensure network or scripts are correct.");
       }
       setGemmaProgress(40);
       const filesetResolver = await genai.FilesetResolver.forGenAiTasks(
         "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-genai/wasm"
       );
       setGemmaProgress(70);
-      const modelUrl = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
-        ? "/models/gemma-4-E2B-it-web.task"
-        : "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it-web.task";
+      // Prefer a locally-hosted model (fast, offline-safe); fall back to the
+      // public HuggingFace copy when the file isn't bundled (e.g. dev).
+      const HF_MODEL = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it-web.task";
+      const localOk = await fetch("/models/gemma-4-E2B-it-web.task", { method: "HEAD" })
+        .then((r) => r.ok && (r.headers.get("content-type") || "").includes("octet-stream"))
+        .catch(() => false);
+      const modelUrl = localOk ? "/models/gemma-4-E2B-it-web.task" : HF_MODEL;
 
       const inference = await genai.LlmInference.createFromOptions(filesetResolver, {
         baseOptions: {
@@ -95,52 +100,55 @@ export default function App() {
     }
   };
 
+  // Apply an offline answer to guidance + feed and speak it. Used by both the
+  // real Gemma path and the deterministic fallback so the mic never dead-ends.
+  const applyOfflineAnswer = (query, answer, viaModel) => {
+    const snap = state || JSON.parse(localStorage.getItem(`aegis_state_${session}`) || "null") || {};
+    snap.environment = snap.environment || [];
+    snap.environment.push({ src: "user", en: query, t: new Date().toISOString() });
+    snap.environment.push({ src: "AEGIS", en: answer, t: new Date().toISOString() });
+    snap.guidance = {
+      ...snap.guidance,
+      current_instruction_en: answer,
+      next_question: "Are you safe and following the offline guide?",
+      needs_tap: false, confirmed: false,
+      action: "OFFLINE GUIDE",
+      headline: viaModel ? "Gemma Edge Active" : "On-device guidance",
+    };
+    snap.timing = { last_reason_ms: viaModel ? 65 : 20 };
+    localStorage.setItem(`aegis_state_${session}`, JSON.stringify(snap));
+    emit("user_utterance", { text: query, dummy: true });
+    speak(answer);
+    setSheet("full");
+  };
+
   const handleUserUtterance = async (t) => {
     if (!t) return;
-    
+
     if (offline) {
+      setVoiceNotice("");
+      // Try the real on-device model; if it isn't warm yet (or fails), fall
+      // back to deterministic guidance so the user always gets a spoken answer.
       if (gemmaStatus !== "ready") {
-        alert("Local Gemma 4 model is not ready! Please click 'warm up' on the bottom right first.");
+        if (gemmaStatus === "dormant" || gemmaStatus === "error") initGemma();
+        applyOfflineAnswer(t, deterministicOfflineAnswer(t, state), false);
         return;
       }
-      // Add user query locally to environment array to display in feed
-      const fakeTime = new Date().toISOString();
-      if (state) {
-        state.environment = state.environment || [];
-        state.environment.push({ src: "user", en: t, t: fakeTime });
-      }
-
-      // Prompt template specifically crafted for the E2B-it edge model
       const prompt = `You are AEGIS, an offline on-device emergency assistant. Guide the user safely based on current situation data.\n` +
         `Situation: ${JSON.stringify(state)}\n\n` +
         `User query: "${t}"\n\n` +
         `Reply with ONE concise, actionable emergency step. Keep it under 25 words. Do not invent exits.`;
-      
       try {
         const response = await gemmaInferenceRef.current.generateResponse(prompt);
-        if (state) {
-          const updated = { ...state };
-          updated.guidance = {
-            ...updated.guidance,
-            current_instruction_en: response,
-            next_question: "Are you safe and following the offline guide?",
-            needs_tap: false,
-            confirmed: false,
-            action: "OFFLINE GUIDE",
-            headline: "Gemma Edge Active"
-          };
-          updated.timing = { last_reason_ms: 65 }; // local edge performance!
-          localStorage.setItem(`aegis_state_${session}`, JSON.stringify(updated));
-          // Emit a mock event to trigger a reactive state-sync
-          emit("user_utterance", { text: t, dummy: true });
-        }
+        applyOfflineAnswer(t, (response || "").trim() || deterministicOfflineAnswer(t, state), true);
       } catch (err) {
         console.error("Local generation failed:", err);
+        applyOfflineAnswer(t, deterministicOfflineAnswer(t, state), false);
       }
     } else {
       emit("user_utterance", { text: t });
+      setSheet("full");
     }
-    setSheet("full");
   };
 
   // ── real-time VOICE: press mic → listen → speak the answer (no chatbot enter) ──
@@ -348,7 +356,7 @@ export default function App() {
                         <span className="core" style={{ width: 46, height: 46 }}><Icon name="mic" size={20} /></span>
                       </div>
                     </div>
-                    <div className="orb-label">{listening ? "Listening — speak now" : "Hold-free · tap to ask by voice"}</div>
+                    <div className="orb-label">{voiceNotice || (listening ? "Listening — speak now" : "Hold-free · tap to ask by voice")}</div>
 
                     {/* the pack: real agents working, tappable for their live trace */}
                     <PackAgents state={state} offline={offline} onOpen={setDrawer} />
@@ -556,3 +564,37 @@ function SosOverlay({ consent, onResolve }) {
 }
 
 function age(iso) { const s = Math.max(0, (Date.now() - new Date(iso)) / 1000); return s < 90 ? `${Math.round(s)}s` : `${Math.round(s / 60)}min`; }
+
+// Deterministic offline guidance from the cached situation — the safety net
+// that keeps the mic answering when the on-device model isn't warm yet.
+function deterministicOfflineAnswer(query, state) {
+  const q = (query || "").toLowerCase();
+  const shelter = state?.route?.target || state?.live_delta?.shelters?.[0]?.name;
+  const dist = state?.route?.distance_m || state?.live_delta?.shelters?.[0]?.dist_m;
+  const eta = state?.route?.duration_s ? Math.max(1, Math.round(state.route.duration_s / 60)) : null;
+  const hospital = state?.live_delta?.hospitals?.[0];
+
+  if (/hospital|doctor|medic|hurt|injur|blood|pain/.test(q)) {
+    return hospital
+      ? `Nearest medical help: ${hospital.name}, about ${hospital.dist_m} m away. Move there carefully or call 119.`
+      : `For medical emergencies call 119 (fire/ambulance). Stay where responders can reach you.`;
+  }
+  if (/shelter|safe|where|go|evacuat|exit/.test(q)) {
+    if (shelter) {
+      const parts = [`Head to ${shelter}`];
+      if (dist) parts.push(`${dist} m away`);
+      if (eta) parts.push(`about ${eta} min on foot`);
+      return parts.join(", ") + ". Follow wide streets, avoid glass and old buildings.";
+    }
+    return `Move to the nearest open space away from buildings and glass. Stay calm and wait for guidance.`;
+  }
+  if (/police|help|call|contact/.test(q)) {
+    return `Police: 110. Fire and ambulance: 119. Share your location with a contact if you can.`;
+  }
+  if (/shak|quake|earthquake|aftershock/.test(q)) {
+    return `Drop, cover under something sturdy, and hold on. When shaking stops, move to ${shelter || "the nearest open space"}.`;
+  }
+  return shelter
+    ? `You're safest heading to ${shelter}${dist ? `, ${dist} m away` : ""}. Avoid buildings and glass, and stay with the crowd.`
+    : `Stay calm. Move to open space away from buildings, and keep this app open for updates.`;
+}

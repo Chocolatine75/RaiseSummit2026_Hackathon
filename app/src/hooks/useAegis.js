@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { buildDemoSituation } from "../demoSituation";
 
 // Single source of truth for the whole app: connects to the Keeper over
 // WebSocket, mirrors the Situation Object, drives real GPS + region entry,
@@ -16,17 +17,21 @@ export function useAegis() {
   const forcedRef = useRef(false); // demo "Go offline" pins us offline (no reconnect)
   const [regionPrep, setRegionPrep] = useState(null); // {title, sub, done}
 
+  const noBackendRef = useRef(false); // once true, stop hammering a Keeper that isn't there
   const emit = useCallback((type, payload = {}) => {
     const ev = { type, payload, src: "client", t: new Date().toISOString() };
     const ws = wsRef.current;
     if (ws && ws.readyState === 1) ws.send(JSON.stringify(ev));
-    else fetch(`/event?session=${SESSION}`, { method: "POST", body: JSON.stringify(ev) }).catch(() => {});
+    else if (!noBackendRef.current) fetch(`/event?session=${SESSION}`, { method: "POST", body: JSON.stringify(ev) }).catch(() => {});
   }, []);
 
   // WebSocket connection with auto-reconnect. connect() is stored in a ref so
   // goOnline() can re-establish the socket after a demo "Cut the network".
   const connectRef = useRef(null);
   const aliveRef = useRef(true);
+  const failCountRef = useRef(0);
+  const liveRef = useRef(false);   // a real Keeper message has arrived
+  const seededRef = useRef(false); // demo situation seeded this session
   useEffect(() => {
     aliveRef.current = true;
     const connect = () => {
@@ -35,6 +40,7 @@ export function useAegis() {
       wsRef.current = ws;
       ws.onmessage = (m) => {
         if (forcedRef.current) return; // pinned offline for the demo
+        liveRef.current = true; // a real Keeper is feeding us — stop the demo fallback
         const s = JSON.parse(m.data);
         s.network = { ...s.network, last_serialized_to_device: new Date().toISOString() };
         localStorage.setItem(CACHE_KEY, JSON.stringify(s));
@@ -42,13 +48,32 @@ export function useAegis() {
         setOffline(false);
         if (s?.user?.location?.lat) prepareRegion(s.user.location);
       };
-      ws.onclose = () => { setOffline(true); if (aliveRef.current && !forcedRef.current) setTimeout(connect, 3000); };
+      ws.onclose = () => {
+        setOffline(true);
+        // Give up reconnecting after a few misses so a missing Keeper doesn't
+        // spam the console every 3s. goOnline() clears this to retry on demand.
+        failCountRef.current += 1;
+        if (failCountRef.current >= 3) noBackendRef.current = true;
+        if (aliveRef.current && !forcedRef.current && !noBackendRef.current) setTimeout(connect, 3000);
+      };
       ws.onerror = () => ws.close();
     };
     connectRef.current = connect;
     connect();
     return () => { aliveRef.current = false; wsRef.current?.close(); };
   }, []);
+
+  // No Keeper reachable → load the self-contained Tokyo demo so the app is fully
+  // explorable offline. Overwrites any stale cached location (old GPS / warp) so
+  // the demo always starts in Tokyo. A live Keeper always wins (liveRef).
+  useEffect(() => {
+    if (offline && !liveRef.current && !seededRef.current) {
+      seededRef.current = true;
+      const demo = buildDemoSituation();
+      localStorage.setItem(CACHE_KEY, JSON.stringify(demo));
+      setState(demo);
+    }
+  }, [offline]);
 
   // Real GPS + automatic new-region detection.
   useEffect(() => {
@@ -99,6 +124,8 @@ export function useAegis() {
   const forceOffline = useCallback(() => { forcedRef.current = true; wsRef.current?.close(); setOffline(true); }, []);
   const goOnline = useCallback(() => {
     forcedRef.current = false;
+    noBackendRef.current = false;
+    failCountRef.current = 0;
     setOffline(false);
     // The socket was closed by forceOffline and never auto-reconnected (pinned);
     // re-establish it now so aftershocks and confirmations flow again.
