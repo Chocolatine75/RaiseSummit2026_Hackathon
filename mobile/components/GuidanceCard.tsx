@@ -1,23 +1,31 @@
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Colors, Fonts } from '@/constants/theme';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Colors, Fonts, Radius, Spacing } from '@/constants/theme';
 
 interface Props {
   text: string | null;
   needsTap: boolean;
+  isOfflineSource: boolean;
   onConfirm: () => void;
 }
 
-export function GuidanceCard({ text, needsTap, onConfirm }: Props) {
+export function GuidanceCard({ text, needsTap, isOfflineSource, onConfirm }: Props) {
   return (
     <View style={styles.card}>
-      <Text style={styles.label}>INSTRUCTION</Text>
+      <View style={styles.header}>
+        <Text style={styles.label}>CURRENT INSTRUCTION</Text>
+        {isOfflineSource && (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>ON-DEVICE</Text>
+          </View>
+        )}
+      </View>
       <Text style={styles.text}>
-        {text ?? 'En attente d\'instructions…'}
+        {text ?? 'Waiting for guidance...'}
       </Text>
       {needsTap && (
-        <TouchableOpacity style={styles.confirmBtn} onPress={onConfirm}>
-          <Text style={styles.confirmText}>CONFIRMER ✓</Text>
-        </TouchableOpacity>
+        <Pressable onPress={onConfirm} style={styles.confirmBtn}>
+          <Text style={styles.confirmText}>CONFIRM ›</Text>
+        </Pressable>
       )}
     </View>
   );
@@ -26,35 +34,57 @@ export function GuidanceCard({ text, needsTap, onConfirm }: Props) {
 const styles = StyleSheet.create({
   card: {
     backgroundColor: Colors.surface,
-    borderRadius: 12,
     borderWidth: 1,
-    borderColor: Colors.borderLight,
-    padding: 16,
-    marginHorizontal: 16,
+    borderColor: Colors.border,
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    gap: Spacing.xs,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 2,
   },
   label: {
     fontFamily: Fonts.mono,
-    fontSize: Fonts.size.xs,
+    fontSize: Fonts.size.xxs,
+    letterSpacing: 1.6,
     color: Colors.textMuted,
-    letterSpacing: 1.5,
-    marginBottom: 8,
+  },
+  badge: {
+    borderWidth: 1,
+    borderColor: 'rgba(255,77,46,0.3)',
+    borderRadius: Radius.sm,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    backgroundColor: 'rgba(255,77,46,0.08)',
+  },
+  badgeText: {
+    fontFamily: Fonts.mono,
+    fontSize: 7,
+    letterSpacing: 0.8,
+    color: Colors.accent,
   },
   text: {
+    fontSize: Fonts.size.md,
+    fontWeight: '600',
     color: Colors.textPrimary,
-    fontSize: Fonts.size.lg,
-    lineHeight: 24,
+    lineHeight: 21,
   },
   confirmBtn: {
-    marginTop: 14,
-    backgroundColor: Colors.accent,
-    borderRadius: 8,
-    paddingVertical: 10,
-    alignItems: 'center',
+    marginTop: Spacing.xs,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.sm,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 4,
   },
   confirmText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: Fonts.size.sm,
-    letterSpacing: 1,
+    fontFamily: Fonts.mono,
+    fontSize: Fonts.size.xxs,
+    letterSpacing: 1.0,
+    color: Colors.textMuted,
   },
 });

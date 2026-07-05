@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react';
-import { Animated, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator } from 'react-native';
-import { Colors, Fonts } from '@/constants/theme';
+import { Feather } from '@expo/vector-icons';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Colors, Fonts, Radius, Spacing } from '@/constants/theme';
 
 interface Props {
   isListening: boolean;
@@ -11,49 +11,25 @@ interface Props {
 }
 
 export function MicButton({ isListening, isProcessing, transcript, onPressIn, onPressOut }: Props) {
-  const pulse = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    if (isListening) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulse, { toValue: 1.15, duration: 600, useNativeDriver: true }),
-          Animated.timing(pulse, { toValue: 1, duration: 600, useNativeDriver: true }),
-        ])
-      ).start();
-    } else {
-      pulse.stopAnimation();
-      pulse.setValue(1);
-    }
-  }, [isListening]);
-
-  const bgColor = isListening ? Colors.micActive : Colors.micIdle;
+  const ringColor = isListening ? Colors.accent : Colors.micBorder;
+  const iconColor = isListening ? Colors.accent : Colors.textPrimary;
+  const hintText  = isProcessing ? 'PROCESSING...' : isListening ? 'LISTENING...' : 'HOLD TO SPEAK';
 
   return (
     <View style={styles.wrapper}>
-      <Animated.View style={[styles.ripple, isListening && { transform: [{ scale: pulse }] }]}>
-        <TouchableOpacity
-          style={[styles.button, { backgroundColor: bgColor }]}
-          onPressIn={onPressIn}
-          onPressOut={onPressOut}
-          activeOpacity={0.8}
-          disabled={isProcessing}
-        >
-          {isProcessing ? (
-            <ActivityIndicator color="#fff" size="large" />
-          ) : (
-            <Text style={styles.icon}>{isListening ? '🎙️' : '🎤'}</Text>
-          )}
-        </TouchableOpacity>
-      </Animated.View>
-
-      <Text style={styles.hint}>
-        {isProcessing ? 'Analyse en cours…' : isListening ? 'Parlez…' : 'Maintenez pour parler'}
-      </Text>
-
-      {transcript.length > 0 && (
-        <Text style={styles.transcript} numberOfLines={2}>{transcript}</Text>
+      {!!transcript && (
+        <View style={styles.transcript}>
+          <Text style={styles.transcriptText}>"{transcript}"</Text>
+        </View>
       )}
+      <Pressable
+        onPressIn={onPressIn}
+        onPressOut={onPressOut}
+        style={[styles.ring, { borderColor: ringColor }]}
+      >
+        <Feather name="mic" size={22} color={iconColor} />
+      </Pressable>
+      <Text style={styles.hint}>{hintText}</Text>
     </View>
   );
 }
@@ -61,32 +37,36 @@ export function MicButton({ isListening, isProcessing, transcript, onPressIn, on
 const styles = StyleSheet.create({
   wrapper: {
     alignItems: 'center',
-    gap: 12,
+    gap: Spacing.sm,
+    width: '100%',
   },
-  ripple: {
-    borderRadius: 60,
+  transcript: {
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.md,
+    padding: Spacing.sm,
+    width: '100%',
   },
-  button: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
+  transcriptText: {
+    fontSize: Fonts.size.sm,
+    color: Colors.textSecondary,
+    fontStyle: 'italic',
+    lineHeight: 18,
+  },
+  ring: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 1,
+    backgroundColor: Colors.micIdle,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  icon: {
-    fontSize: 36,
-  },
   hint: {
     fontFamily: Fonts.mono,
-    fontSize: Fonts.size.sm,
+    fontSize: Fonts.size.xxs,
+    letterSpacing: 1.2,
     color: Colors.textMuted,
-  },
-  transcript: {
-    fontFamily: Fonts.mono,
-    fontSize: Fonts.size.sm,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    marginHorizontal: 32,
-    fontStyle: 'italic',
   },
 });
