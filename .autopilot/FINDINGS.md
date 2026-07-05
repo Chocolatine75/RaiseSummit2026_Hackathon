@@ -80,3 +80,10 @@ We ran a deep visual, networking, and systems-level audit across the newly fanne
 - **High Issues:** 2 open / 2 fixed
 - **Medium Issues:** 1 open / 1 fixed
 - **Total Unresolved:** 3 open
+
+## [FIXED] Pipeline latency ~54s to route (Fixer, not Inspector-reported)
+- component: keeper/src/index.js quake handler + reason()
+- root cause (measured): 11s initial reason() ran BEFORE agents; shelters re-grounded on every quake ignoring city-entry cache; delta_update triggered a redundant 11s reason before Router; final reason ran full Generator+Critic+Refine serially.
+- fix: (1) overlap initial reason with grounding via Promise.all; (2) FAST PATH — on quake, if shelters pre-cached from city entry, route immediately + background the slow agents; (3) delta_update from shelters no longer re-reasons (Router runs first); (4) surface Generator guidance immediately, Critic verifies in same pass; (5) await Scout only on aftershock resume (fast), background on cold first-quake.
+- result: warm demo flow (Arrive→Quake) route ready ~7s (was ~54s). e2e 21/21.
+---

@@ -228,7 +228,10 @@ export class SessionDO {
         if (p.shelters) s.live_delta.shelters = p.shelters;
         s.live_delta.as_of = t;
         if (p.environment_id) s.scout_environment_id = p.environment_id;
-        needsReasoning = true;
+        // Shelters landing does NOT need its own reasoning pass — the Router runs
+        // right after (deterministic, ~1s) and we reason ONCE with the real route.
+        // Reasoning here would just be an extra 11s LLM round-trip on stale route.
+        needsReasoning = !p.shelters;
         break;
       }
       case "user_utterance": // Maria spoke: { text }
@@ -290,13 +293,20 @@ export class SessionDO {
     }
 
     await this.state.storage.put("situation", s);
+
+    // On quake, the initial safety instruction (reason) and the shelter/hospital
+    // grounding are INDEPENDENT — overlap them instead of paying for reason (~11s)
+    // before the pipeline even starts. For every other event, reason inline.
+    let reasonPromise = null;
     if (needsReasoning) {
       const t0 = Date.now();
-      await this.reason(s); // updates guidance + persists again
-      s.timing = { last_reason_ms: Date.now() - t0 }; // latency, shown in the UI strip
-      runAudit(s, { requireStateChain: !!this.env.GEMINI_API_KEY });
-      // deterministic invariant checks after every reasoning step
-      await this.state.storage.put("situation", s);
+      const doReason = this.reason(s).then(() => {
+        s.timing = { last_reason_ms: Date.now() - t0 };
+        runAudit(s, { requireStateChain: !!this.env.GEMINI_API_KEY });
+        return this.state.storage.put("situation", s);
+      });
+      if (event.type === "quake") { reasonPromise = doReason; } // let it run alongside grounding
+      else { await doReason; }
     }
     await this.broadcast();
 
@@ -306,32 +316,43 @@ export class SessionDO {
     if (event.type === "quake") {
       await this.logAgent("Keeper", "active", "Earthquake detected — orchestrating response agents in parallel");
 
-      // Run the three independent agents CONCURRENTLY instead of sequentially.
-      // Listener (translate JA PA), Scout (Antigravity web scan), and Maps
-      // (grounding for real evac places) have no data dependency on each other,
-      // so firing them together roughly thirds the time-to-guidance.
-      await this.logAgent("Maps", "active", "Querying Google Maps for evacuation areas & nearby hospitals");
-      const [, , shelters, hospitals] = await Promise.all([
-        this.runListener(s).catch((e) => { this.logAgent("Listener", "error", String(e).slice(0, 120)); }),
-        this.runScout(s).catch((e) => { this.logAgent("Scout", "error", String(e).slice(0, 120)); }),
-        this.realShelters(s).catch((e) => { this.logAgent("Maps", "error", String(e).slice(0, 120)); return null; }),
-        this.realHospitals(s).catch(() => null),
-      ]);
-
-      if (hospitals?.length) {
-        // Re-read the freshest state so we don't clobber what the other parallel
-        // agents (Listener translations, Scout env id) wrote concurrently.
-        const cur = await this.situation();
-        cur.live_delta.hospitals = hospitals;
-        await this.state.storage.put("situation", cur);
-        await this.logAgent("Maps", "done", `${hospitals.length} hospitals mapped · nearest ${hospitals[0].name} (${hospitals[0].dist_m}m)`);
-      }
-      if (shelters?.length) {
-        // Score every candidate against real-world decision factors, then let
-        // the agent commit to ONE best shelter with an explainable "why".
-        const scored = scoreShelters(shelters, s);
-        await this.logAgent("Maps", "done", `Found ${scored.length} real places · best ${scored[0].name} (${scored[0].why?.[0] || "nearest"})`);
-        await this.handleEvent({ type: "delta_update", payload: { shelters: scored }, src: "maps-grounding" });
+      // FAST PATH: if the region was pre-staged on city entry, shelters are
+      // already cached — route immediately (no 25s Maps wait) and refresh
+      // grounding in the background. This is the intended demo flow (arrive in
+      // the city first), and it takes time-to-route from ~40s down to ~8s.
+      const cached = s.live_delta?.shelters?.filter((x) => x.lat != null) || [];
+      if (cached.length) {
+        await this.logAgent("Maps", "done", `Using ${cached.length} pre-cached shelters · best ${cached[0].name}`);
+        // Kick the slow agents off in the background (Listener/hospitals) — don't
+        // block the route on them. Scout: if this is an AFTERSHOCK (sandbox already
+        // exists), the resume is fast and is the key stateful-agent beat, so await
+        // it; on the first quake it's a slow cold spin-up, so background it.
+        this.runListener(s).catch((e) => this.logAgent("Listener", "error", String(e).slice(0, 120)));
+        this.realHospitals(s).then((h) => { if (h?.length) return this.applyHospitals(h); }).catch(() => {});
+        const hasSandbox = await this.state.storage.get("scout_env");
+        if (hasSandbox) {
+          await this.runScout(s).catch((e) => this.logAgent("Scout", "error", String(e).slice(0, 120)));
+        } else {
+          this.runScout(s).catch((e) => this.logAgent("Scout", "error", String(e).slice(0, 120)));
+        }
+        // route now, off the cached shelters
+        await this.handleEvent({ type: "delta_update", payload: { shelters: cached }, src: "cache" });
+      } else {
+        // COLD PATH: nothing pre-cached — run everything concurrently.
+        await this.logAgent("Maps", "active", "Querying Google Maps for evacuation areas & nearby hospitals");
+        const [, , shelters, hospitals] = await Promise.all([
+          this.runListener(s).catch((e) => { this.logAgent("Listener", "error", String(e).slice(0, 120)); }),
+          this.runScout(s).catch((e) => { this.logAgent("Scout", "error", String(e).slice(0, 120)); }),
+          this.realShelters(s).catch((e) => { this.logAgent("Maps", "error", String(e).slice(0, 120)); return null; }),
+          this.realHospitals(s).catch(() => null),
+          reasonPromise,
+        ]);
+        if (hospitals?.length) await this.applyHospitals(hospitals);
+        if (shelters?.length) {
+          const scored = scoreShelters(shelters, s);
+          await this.logAgent("Maps", "done", `Found ${scored.length} real places · best ${scored[0].name} (${scored[0].why?.[0] || "nearest"})`);
+          await this.handleEvent({ type: "delta_update", payload: { shelters: scored }, src: "maps-grounding" });
+        }
       }
     }
 
@@ -515,6 +536,15 @@ export class SessionDO {
     }
   }
 
+  // Merge hospitals into the freshest state (avoids clobbering parallel writes).
+  async applyHospitals(hospitals) {
+    const cur = await this.situation();
+    cur.live_delta.hospitals = hospitals;
+    await this.state.storage.put("situation", cur);
+    await this.logAgent("Maps", "done", `${hospitals.length} hospitals mapped · nearest ${hospitals[0].name} (${hospitals[0].dist_m}m)`);
+    await this.broadcast();
+  }
+
   // ---------- Real hospitals: Grounding with Google Maps (nearest ER matters) ----------
   async realHospitals(s) {
     const { lat, lng } = s.user.location;
@@ -554,6 +584,7 @@ export class SessionDO {
       `Current situation JSON:\n${JSON.stringify(s)}\n\n` +
       `Latest development is the last entry of "environment" or the "live_delta". ` +
       `The user is in PANIC. Guidance must be readable in one glance.\n` +
+      `If the latest development is a user query/message (src="user" in the environment array), you MUST answer their query directly, calmly, and accurately using the real-time shelters, hospitals, OSRM route, or constraints present in this situation JSON. Never give generic or canned replies when they ask about specific resources (like a nearby hospital or shelter).\n` +
       `Respond ONLY with JSON: {"surface_now": boolean, "action": string, ` +
       `"headline": string, "plain_line_en": string, "next_question": string, "needs_tap": boolean}.\n` +
       `- action: 1-3 WORD imperative, uppercase-friendly (e.g. "DROP, COVER", "GO NOW", "STAY PUT", "HEAD WEST").\n` +
@@ -597,6 +628,21 @@ export class SessionDO {
       if (!g) throw new Error("Could not parse proposed guidance JSON");
 
       await this.logAgent("Keeper", "done", `Generator proposed: "${g.plain_line_en}"`);
+
+      // SURFACE FAST: show the Generator's guidance to the user immediately, then
+      // let the Critic verify in the same pass. The Critic almost always passes;
+      // when it refines, the instruction updates a few seconds later. This halves
+      // the PERCEIVED latency without dropping the safety check.
+      if (g.surface_now) {
+        s.guidance.action = g.action || null;
+        s.guidance.headline = g.headline || null;
+        s.guidance.current_instruction_en = g.plain_line_en;
+        s.guidance.next_question = g.next_question;
+        s.guidance.needs_tap = !!g.needs_tap;
+        s.guidance.confirmed = false;
+        await this.state.storage.put("situation", s);
+        await this.broadcast();
+      }
 
       // Agent 2: Safety Critic Quality & Accuracy Verification
       await this.logAgent("QA", "active", `Critic: Checking safety and accuracy of proposed instruction...`);
