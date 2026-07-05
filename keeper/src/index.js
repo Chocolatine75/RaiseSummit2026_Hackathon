@@ -245,10 +245,18 @@ export class SessionDO {
         needsReasoning = !p.shelters;
         break;
       }
-      case "user_utterance": // Maria spoke: { text }
-        s.environment.push({ src: "user", en: event.payload?.text, t });
+      case "user_utterance": { // Maria spoke/typed: { text }
+        const q = event.payload?.text || "";
+        s.environment.push({ src: "user", en: q, t });
+        // INSTANT deterministic answer (<100ms) from the situation we already
+        // hold, so the reply feels real-time; reason() refines it seconds later.
+        const fast = fastAnswer(q, s);
+        if (fast) {
+          s.guidance = { ...s.guidance, current_instruction_en: fast, next_question: "Anything else?", needs_tap: false, confirmed: false };
+        }
         needsReasoning = true;
         break;
+      }
       case "user_tap": // Maria confirmed the pending guidance
         s.guidance.confirmed = true;
         s.guidance.needs_tap = false;
@@ -256,6 +264,18 @@ export class SessionDO {
       case "clear_chat": // fresh page load — wipe the ephemeral conversation
         s.environment = [];
         break;
+      case "set_language": { // UI language picker → re-translate PA in the new language
+        const newLang = event.payload?.lang;
+        if (newLang && newLang !== s.user.language) {
+          s.user.language = newLang;
+          // drop old-language PA lines and re-run the Listener in the new language
+          s.environment = (s.environment || []).filter((e) => e.src !== "PA");
+          await this.state.storage.put("situation", s);
+          await this.broadcast();
+          this.runListener(await this.situation()).catch(() => {});
+        }
+        break;
+      }
       case "set_location": { // from the phone's real GPS: { lat, lng, accuracy_m, place }
         const p = event.payload || {};
         if (p.lat != null && p.lng != null) {
@@ -344,14 +364,21 @@ export class SessionDO {
     let reasonPromise = null;
     if (needsReasoning) {
       const t0 = Date.now();
-      const doReason = this.reason(s).then(async () => {
+      const doReason = () => this.reason(s).then(async () => {
         const cur = await this.situation();
         cur.timing = { last_reason_ms: Date.now() - t0 };
         runAudit(cur, { requireStateChain: !!this.env.GEMINI_API_KEY });
-        return this.state.storage.put("situation", cur);
+        await this.state.storage.put("situation", cur);
+        await this.broadcast();
       });
-      if (event.type === "quake") { reasonPromise = doReason; } // let it run alongside grounding
-      else { await doReason; }
+      if (event.type === "quake") { reasonPromise = doReason(); } // runs alongside grounding
+      else {
+        // user_utterance etc.: the instant fastAnswer is already set, so broadcast
+        // it NOW and let the LLM refine in the background — the reply feels real-time.
+        await this.broadcast();
+        doReason().catch((e) => console.error("reason bg:", e));
+        return json({ ok: true, async: true });
+      }
     }
     await this.broadcast();
 
@@ -915,6 +942,23 @@ export class SessionDO {
       return json({ ok: false, error: `vision unavailable: ${String(e).slice(0, 120)}` }, 503);
     }
   }
+}
+
+// Instant, situation-grounded answer to a user question — deterministic, so it
+// returns in microseconds. reason() refines it a few seconds later.
+function fastAnswer(q, s) {
+  const t = (q || "").toLowerCase();
+  const r = s.route, sh = s.live_delta?.shelters?.[0], h = s.live_delta?.hospitals?.[0];
+  if (/stair|elevator|lift|escalator/.test(t))
+    return `Avoid elevators and escalators — they may be stopped. ${r?.target ? `Take the step-free route to ${r.target}.` : "Use a step-free path."}`;
+  if (/shelter|evacuat|where.*(go|safe)|safe place|exit/.test(t) && (r?.target || sh))
+    return `Go to ${r?.target || sh.name}${r ? ` — ${r.distance_m} m, about ${Math.max(1, Math.round((r.duration_s || 0) / 60))} min on foot along the marked route.` : "."}`;
+  if (/hospital|hurt|injur|medical|bleed|doctor/.test(t) && h)
+    return `Nearest medical is ${h.name}, ${h.dist_m} m away. For a serious injury call 119.`;
+  if (/fire|smoke|burn/.test(t)) return "Stay low under smoke, cover your nose, move to the nearest exit, and call 119.";
+  if (/water|drink|thirst|food|hungry/.test(t)) return "Ration supplies. Your offline vault marks the nearest supply point on the map.";
+  if (/aftershock|again|another/.test(t)) return "Aftershocks are likely. Stay near cover, keep away from glass and tall furniture, and keep following the route.";
+  return null; // let the LLM handle open-ended questions
 }
 
 function deterministicGuidance(s) {

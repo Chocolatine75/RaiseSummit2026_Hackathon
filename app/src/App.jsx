@@ -50,7 +50,7 @@ export default function App() {
   const wasQuakeRef = useRef(false);
 
   useEffect(() => { const u = () => setTime(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })); u(); const i = setInterval(u, 1000); return () => clearInterval(i); }, []);
-  useEffect(() => { localStorage.setItem("aegis_lang", lang); }, [lang]);
+  useEffect(() => { localStorage.setItem("aegis_lang", lang); emit("set_language", { lang }); }, [lang]);
   useEffect(() => { localStorage.setItem("aegis_consent", JSON.stringify(consent)); }, [consent]);
 
   // fire alert + open sheet when quake begins
