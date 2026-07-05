@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { SituationObject } from '@/types/situation';
-import { createWebSocket, fetchState, postEvent, queryGemma, SESSION_ID } from '@/services/keeper';
+import { createWebSocket, fetchState, postEvent, queryGemma, queryVoice, SESSION_ID } from '@/services/keeper';
 import { loadSituation, saveSituation } from '@/services/storage';
 import { requestPermissions, speak, startRecording, stopRecording } from '@/services/audio';
 
@@ -91,18 +91,19 @@ export function SituationProvider({ children }: { children: React.ReactNode }) {
       if (!audioBase64) { setIsProcessing(false); return; }
 
       if (isOfflineMode) {
-        // Offline: send audio + vault context to /api/gemma
+        // Offline: STT via Keeper /api/voice, then on-device Gemma for response.
+        // "Offline mode" means use on-device AI, not no-network — Keeper STT is still reachable.
+        const { transcript: t } = await queryVoice(audioBase64, 'audio/m4a');
+        setTranscript(t);
         const vaultContext = buildVaultContext(situation);
-        const response = await queryGemma('', vaultContext);
+        const response = await queryGemma(t, vaultContext);
         setLastResponse(response);
         speak(response, situation?.user.language === 'fr' ? 'fr-FR' : 'en-US');
-        // Update guidance locally
-        if (situation) {
-          setSituation({
-            ...situation,
-            guidance: { ...situation.guidance, current_instruction_en: response },
-          });
-        }
+        // Update guidance locally — WS is disconnected in offline mode
+        setSituation(prev => prev ? {
+          ...prev,
+          guidance: { ...prev.guidance, current_instruction_en: response },
+        } : prev);
       } else {
         // Online: send audio to Keeper /api/voice
         const res = await fetch(`https://aegis-keeper.devstar7014.workers.dev/api/voice?session=${SESSION_ID}`, {
@@ -120,6 +121,12 @@ export function SituationProvider({ children }: { children: React.ReactNode }) {
           // WS will push updated situation automatically
         }
       }
+    } catch (err) {
+      console.warn('[AEGIS] offline voice error:', err);
+      setSituation(prev => prev ? {
+        ...prev,
+        guidance: { ...prev.guidance, current_instruction_en: 'Voice processing failed. Please try again.' },
+      } : prev);
     } finally {
       setIsProcessing(false);
     }

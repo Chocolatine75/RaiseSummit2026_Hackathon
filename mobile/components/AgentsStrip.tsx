@@ -29,7 +29,7 @@ export function AgentsStrip({ isOnline, situation }: { isOnline: boolean; situat
 
   return (
     <View style={styles.container}>
-      <Text style={styles.label}>Scout</Text>
+      <Text style={styles.label}>SCOUT</Text>
       <View style={styles.dots}>
         {states.map((s, i) => (
           <View key={i} style={[styles.dot, { backgroundColor: dotColor(s) }]} />

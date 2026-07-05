@@ -23,6 +23,16 @@ export async function postEvent(type: string, payload: object): Promise<void> {
   } catch { /* ignore network errors in offline mode */ }
 }
 
+export async function queryVoice(audioBase64: string, mimeType: string): Promise<{ transcript: string; response: string }> {
+  const res = await fetch(`${BASE_URL}/api/voice?session=${SESSION_ID}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ audio_b64: audioBase64, mime_type: mimeType }),
+  });
+  if (!res.ok) throw new Error('Voice unavailable');
+  return await res.json();
+}
+
 export async function queryGemma(question: string, vaultContext: string): Promise<string> {
   const res = await fetch(`${BASE_URL}/api/gemma?session=${SESSION_ID}`, {
     method: 'POST',

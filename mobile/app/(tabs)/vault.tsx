@@ -44,7 +44,14 @@ export default function VaultScreen() {
             <SectionLabel title={`SHELTERS (${live_delta.shelters.length})`} />
             {live_delta.shelters.map((s, i) => (
               <Card key={i}>
-                <Text style={styles.cardTitle}>{s.name}{s.step_free ? '  ♿' : ''}</Text>
+                <View style={styles.cardTitleRow}>
+                  <Text style={styles.cardTitle}>{s.name}</Text>
+                  {s.step_free && (
+                    <View style={styles.accessBadge}>
+                      <Text style={styles.accessBadgeText}>STEP-FREE</Text>
+                    </View>
+                  )}
+                </View>
                 <Row label="Address" value={s.address} />
                 <Row label="Distance" value={`${s.dist_m}m`} valueColor={Colors.textPrimary} />
                 <Row label="Capacity" value={s.capacity} />
@@ -129,7 +136,10 @@ const styles = StyleSheet.create({
   section: { gap: Spacing.sm },
   sectionLabel: { fontFamily: Fonts.mono, fontSize: Fonts.size.xxs, letterSpacing: 1.6, color: Colors.textMuted, marginBottom: 2 },
   card: { backgroundColor: Colors.surface, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, padding: Spacing.md, gap: Spacing.xs },
-  cardTitle: { color: Colors.textPrimary, fontSize: Fonts.size.md, fontWeight: '600', marginBottom: 4 },
+  cardTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  cardTitle: { color: Colors.textPrimary, fontSize: Fonts.size.md, fontWeight: '600' },
+  accessBadge: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)', borderRadius: Radius.sm, paddingHorizontal: 5, paddingVertical: 1 },
+  accessBadgeText: { fontFamily: Fonts.mono, fontSize: 7, letterSpacing: 0.8, color: Colors.textMuted },
   row: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
   rowLabel: { fontFamily: Fonts.mono, fontSize: Fonts.size.xs, color: Colors.textMuted, flex: 1 },
   rowValue: { fontFamily: Fonts.mono, fontSize: Fonts.size.xs, color: Colors.textSecondary, flex: 2, textAlign: 'right' },

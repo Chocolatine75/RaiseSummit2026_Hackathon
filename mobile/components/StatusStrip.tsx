@@ -11,7 +11,7 @@ interface Props {
 }
 
 export function StatusStrip({ sessionId, isConnected, isOfflineMode, lastSync, onLongPress }: Props) {
-  const dotColor = isOfflineMode ? Colors.accent : Colors.online;
+  const dotColor = isOfflineMode ? Colors.accent : isConnected ? Colors.online : Colors.textMuted;
   const time = lastSync ? new Date(lastSync).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '--:--';
 
   return (
