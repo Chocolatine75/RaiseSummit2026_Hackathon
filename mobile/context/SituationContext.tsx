@@ -1,21 +1,19 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import * as Location from 'expo-location';
 import { SituationObject } from '@/types/situation';
-import { createWebSocket, fetchState, postEvent, queryGemma, queryVoice, SESSION_ID } from '@/services/keeper';
+import { createWebSocket, fetchState, postEvent, transcribeAudio, SESSION_ID } from '@/services/keeper';
 import { loadSituation, saveSituation } from '@/services/storage';
-import { requestPermissions, speak, startRecording, stopRecording } from '@/services/audio';
+import { requestPermissions, speak, startRecording, stopRecording, stopSpeaking } from '@/services/audio';
 
 interface SituationContextValue {
   situation: SituationObject | null;
   isConnected: boolean;
-  isOfflineMode: boolean;
   isListening: boolean;
   isProcessing: boolean;
+  isConversationActive: boolean;
   transcript: string;
-  lastResponse: string;
   sessionId: string;
-  onLongPressStatus: () => void;
-  onMicPressIn: () => void;
-  onMicPressOut: () => void;
+  onMicTap: () => void;
   confirmGuidance: () => void;
 }
 
@@ -24,29 +22,69 @@ const SituationContext = createContext<SituationContextValue | null>(null);
 export function SituationProvider({ children }: { children: React.ReactNode }) {
   const [situation, setSituation] = useState<SituationObject | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-  const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isConversationActive, setIsConversationActive] = useState(false);
   const [transcript, setTranscript] = useState('');
-  const [lastResponse, setLastResponse] = useState('');
-  const destroyWs = useRef<(() => void) | null>(null);
 
-  // Persist situation to AsyncStorage on every update
+  const destroyWs = useRef<(() => void) | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Ref so silence/speak callbacks can read latest value without stale closure
+  const conversationRef = useRef(false);
+  const listeningRef = useRef(false);
+  const prevGuidanceRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (situation) saveSituation(situation);
   }, [situation]);
 
-  // Boot: load cache then connect
   useEffect(() => {
-    loadSituation().then((cached) => {
-      if (cached) setSituation(cached);
-    });
-
+    loadSituation().then((cached) => { if (cached) setSituation(cached); });
+    fetchState().then((sit) => { if (sit) setSituation(sit); });
     requestPermissions();
     connectWebSocket();
 
-    return () => destroyWs.current?.();
+    pollRef.current = setInterval(() => {
+      fetchState().then((sit) => { if (sit) setSituation(sit); });
+    }, 2000);
+
+    let locationSub: Location.LocationSubscription | null = null;
+    Location.requestForegroundPermissionsAsync().then(({ status }) => {
+      if (status !== 'granted') return;
+      Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.High, distanceInterval: 15 },
+        (loc) => {
+          const { latitude: lat, longitude: lng, accuracy } = loc.coords;
+          postEvent('set_location', { lat, lng, accuracy_m: Math.round(accuracy ?? 0) });
+        }
+      ).then((sub) => { locationSub = sub; });
+    });
+
+    return () => {
+      destroyWs.current?.();
+      locationSub?.remove();
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, []);
+
+  // When guidance changes during active conversation → speak it → reopen mic
+  useEffect(() => {
+    const current = situation?.guidance.current_instruction_en;
+    if (!current || current === prevGuidanceRef.current) return;
+    prevGuidanceRef.current = current;
+    if (!conversationRef.current) return;
+
+    setIsProcessing(false);
+
+    // Estimate TTS duration then reopen mic (iOS uses onDone, Android uses timer)
+    const estimatedMs = Math.max(3000, (current.split(' ').length / 2.5) * 1000);
+    speak(current, () => {
+      if (conversationRef.current) openMicTurn();
+    });
+    setTimeout(() => {
+      if (conversationRef.current && !listeningRef.current) openMicTurn();
+    }, estimatedMs + 600);
+  }, [situation?.guidance.current_instruction_en]);
 
   function connectWebSocket() {
     destroyWs.current?.();
@@ -54,101 +92,72 @@ export function SituationProvider({ children }: { children: React.ReactNode }) {
       (sit) => setSituation(sit),
       (connected) => {
         setIsConnected(connected);
-        // If WS reconnected, also pull latest state via HTTP
         if (connected) fetchState().then((sit) => { if (sit) setSituation(sit); });
       }
     );
   }
 
-  function toggleOfflineMode() {
-    setIsOfflineMode((prev) => {
-      if (prev) {
-        // Going back online
-        connectWebSocket();
-      } else {
-        // Going offline — disconnect WS
-        destroyWs.current?.();
-        setIsConnected(false);
-      }
-      return !prev;
-    });
-  }
-
-  async function onMicPressIn() {
-    if (isListening || isProcessing) return;
-    setTranscript('');
+  async function openMicTurn() {
+    if (!conversationRef.current) return;
+    listeningRef.current = true;
     setIsListening(true);
+    setTranscript('');
     await startRecording();
   }
 
-  async function onMicPressOut() {
-    if (!isListening) return;
+  async function sendAndWait() {
+    if (!listeningRef.current) return;
+    listeningRef.current = false;
     setIsListening(false);
     setIsProcessing(true);
-
     try {
       const audioBase64 = await stopRecording();
       if (!audioBase64) { setIsProcessing(false); return; }
-
-      if (isOfflineMode) {
-        // Offline: STT via Keeper /api/voice, then on-device Gemma for response.
-        // "Offline mode" means use on-device AI, not no-network — Keeper STT is still reachable.
-        const { transcript: t } = await queryVoice(audioBase64, 'audio/m4a');
-        setTranscript(t);
-        const vaultContext = buildVaultContext(situation);
-        const response = await queryGemma(t, vaultContext);
-        setLastResponse(response);
-        speak(response, situation?.user.language === 'fr' ? 'fr-FR' : 'en-US');
-        // Update guidance locally — WS is disconnected in offline mode
-        setSituation(prev => prev ? {
-          ...prev,
-          guidance: { ...prev.guidance, current_instruction_en: response },
-        } : prev);
-      } else {
-        // Online: send audio to Keeper /api/voice
-        const res = await fetch(`https://aegis-keeper.devstar7014.workers.dev/api/voice?session=${SESSION_ID}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ audio_b64: audioBase64, mime_type: 'audio/m4a' }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.transcript) setTranscript(data.transcript);
-          if (data.response) {
-            setLastResponse(data.response);
-            speak(data.response, situation?.user.language === 'fr' ? 'fr-FR' : 'en-US');
-          }
-          // WS will push updated situation automatically
-        }
-      }
+      const text = await transcribeAudio(audioBase64, 'audio/m4a');
+      console.log('[AEGIS] transcript:', text);
+      setTranscript(text);
+      await postEvent('user_utterance', { text });
+      // AI response arrives via poll → guidance effect speaks it → reopens mic
     } catch (err) {
-      console.warn('[AEGIS] offline voice error:', err);
-      setSituation(prev => prev ? {
-        ...prev,
-        guidance: { ...prev.guidance, current_instruction_en: 'Voice processing failed. Please try again.' },
-      } : prev);
-    } finally {
+      console.warn('[AEGIS] voice error:', err);
       setIsProcessing(false);
     }
   }
 
+  async function onMicTap() {
+    if (isProcessing) return;
+
+    if (!conversationRef.current) {
+      // Start conversation — first tap opens mic
+      conversationRef.current = true;
+      setIsConversationActive(true);
+      await openMicTurn();
+    } else if (listeningRef.current) {
+      // Second tap while listening → send what was recorded
+      await sendAndWait();
+    } else {
+      // Tap while AI is speaking / waiting → end conversation
+      conversationRef.current = false;
+      setIsConversationActive(false);
+      setIsListening(false);
+      stopSpeaking();
+    }
+  }
+
   async function confirmGuidance() {
-    await postEvent('confirm_guidance', {});
+    await postEvent('user_tap', {});
   }
 
   return (
     <SituationContext.Provider value={{
       situation,
       isConnected,
-      isOfflineMode,
       isListening,
       isProcessing,
+      isConversationActive,
       transcript,
-      lastResponse,
       sessionId: SESSION_ID,
-      onLongPressStatus: toggleOfflineMode,
-      onMicPressIn,
-      onMicPressOut,
+      onMicTap,
       confirmGuidance,
     }}>
       {children}
@@ -160,36 +169,4 @@ export function useSituation() {
   const ctx = useContext(SituationContext);
   if (!ctx) throw new Error('useSituation must be used inside SituationProvider');
   return ctx;
-}
-
-function buildVaultContext(situation: SituationObject | null): string {
-  if (!situation) return '';
-  const lines: string[] = [];
-
-  situation.live_delta.shelters.slice(0, 3).forEach((s) => {
-    lines.push(`Shelter: ${s.name}, ${s.dist_m}m, ${s.step_free ? 'step-free' : ''}, capacity: ${s.capacity}`);
-  });
-
-  if (situation.country_context?.embassy) {
-    const e = situation.country_context.embassy;
-    lines.push(`Embassy ${e.nationality}: ${e.address}, emergency: ${e.emergency_line}`);
-  }
-
-  Object.entries(situation.country_context?.emergency_numbers ?? {}).forEach(([k, v]) => {
-    lines.push(`${k}: ${v}`);
-  });
-
-  situation.active_alerts.slice(0, 2).forEach((a) => {
-    lines.push(`Alert ${a.source}: ${a.message}`);
-  });
-
-  situation.country_context?.key_phrases.slice(0, 5).forEach((p) => {
-    lines.push(`Phrase: "${p.local}" = "${p.en}" (${p.romanized})`);
-  });
-
-  if (situation.guidance.current_instruction_en) {
-    lines.push(`Current instruction: ${situation.guidance.current_instruction_en}`);
-  }
-
-  return lines.join('\n');
 }

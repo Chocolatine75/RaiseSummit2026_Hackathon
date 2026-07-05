@@ -1,6 +1,6 @@
 import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 let recording: Audio.Recording | null = null;
 
@@ -10,36 +10,40 @@ export async function requestPermissions(): Promise<boolean> {
 }
 
 export async function startRecording(): Promise<void> {
-  await Audio.setAudioModeAsync({
-    allowsRecordingIOS: true,
-    playsInSilentModeIOS: true,
-  });
-  recording = new Audio.Recording();
-  await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-  await recording.startAsync();
+  try {
+    if (recording) {
+      await recording.stopAndUnloadAsync().catch(() => {});
+      recording = null;
+    }
+    await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+    const { recording: rec } = await Audio.Recording.createAsync(
+      Audio.RecordingOptionsPresets.HIGH_QUALITY
+    );
+    recording = rec;
+  } catch (e) {
+    console.warn('[AEGIS] startRecording error:', e);
+  }
 }
 
 export async function stopRecording(): Promise<string | null> {
   if (!recording) return null;
+  const rec = recording;
+  recording = null;
   try {
-    await recording.stopAndUnloadAsync();
-    const uri = recording.getURI();
-    recording = null;
+    await rec.stopAndUnloadAsync();
     await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+    const uri = rec.getURI();
     if (!uri) return null;
-    // Encode to base64 for sending to backend
-    return await FileSystem.readAsStringAsync(uri, {
-      encoding: 'base64' as any,
-    });
-  } catch {
-    recording = null;
+    return await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+  } catch (e) {
+    console.warn('[AEGIS] stopRecording error:', e);
     return null;
   }
 }
 
-export function speak(text: string, language = 'fr-FR'): void {
+export function speak(text: string, onDone?: () => void): void {
   Speech.stop();
-  Speech.speak(text, { language, rate: 0.95 });
+  Speech.speak(text, { language: 'en-US', rate: 0.9, onDone });
 }
 
 export function stopSpeaking(): void {

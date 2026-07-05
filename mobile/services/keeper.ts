@@ -1,7 +1,9 @@
 import { SituationObject } from '@/types/situation';
 
-const BASE_URL = 'https://aegis-keeper.devstar7014.workers.dev';
-export const SESSION_ID = 'aegis-maria-001';
+const BASE_URL = 'https://aegis-keeper.rahul-aegis.workers.dev';
+// Our Keeper is kept alive solely for STT (audio → transcript)
+const STT_URL = 'https://aegis-keeper.devstar7014.workers.dev';
+export const SESSION_ID = 'matteo-maria-001';
 
 export async function fetchState(): Promise<SituationObject | null> {
   try {
@@ -20,28 +22,18 @@ export async function postEvent(type: string, payload: object): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type, payload, src: 'mobile' }),
     });
-  } catch { /* ignore network errors in offline mode */ }
+  } catch { /* fire-and-forget */ }
 }
 
-export async function queryVoice(audioBase64: string, mimeType: string): Promise<{ transcript: string; response: string }> {
-  const res = await fetch(`${BASE_URL}/api/voice?session=${SESSION_ID}`, {
+export async function transcribeAudio(audioBase64: string, mimeType: string): Promise<string> {
+  const res = await fetch(`${STT_URL}/api/voice?session=${SESSION_ID}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ audio_b64: audioBase64, mime_type: mimeType }),
   });
-  if (!res.ok) throw new Error('Voice unavailable');
-  return await res.json();
-}
-
-export async function queryGemma(question: string, vaultContext: string): Promise<string> {
-  const res = await fetch(`${BASE_URL}/api/gemma?session=${SESSION_ID}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, vault_context: vaultContext }),
-  });
-  if (!res.ok) throw new Error('Gemma unavailable');
+  if (!res.ok) throw new Error('STT unavailable');
   const data = await res.json();
-  return data.response as string;
+  return data.transcript as string;
 }
 
 export function createWebSocket(
@@ -55,7 +47,7 @@ export function createWebSocket(
 
   function connect() {
     if (destroyed) return;
-    ws = new WebSocket(`wss://aegis-keeper.devstar7014.workers.dev/ws?session=${SESSION_ID}`);
+    ws = new WebSocket(`wss://aegis-keeper.rahul-aegis.workers.dev/ws?session=${SESSION_ID}`);
 
     ws.onopen = () => {
       retryDelay = 5000;

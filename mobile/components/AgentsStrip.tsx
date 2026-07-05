@@ -1,39 +1,45 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { SituationObject } from '@/types/situation';
+import { AgentOp } from '@/types/situation';
 import { Colors, Fonts, Radius, Spacing } from '@/constants/theme';
 
-type DotState = 'active' | 'idle' | 'offline';
+const AGENTS = ['Keeper', 'Listener', 'Scout', 'Maps', 'Router', 'QA'];
 
-function getDotStates(isOnline: boolean, situation: SituationObject | null): DotState[] {
-  if (!isOnline) return ['offline', 'offline', 'offline', 'offline'];
-  if (!situation) return ['idle', 'idle', 'idle', 'idle'];
-  const hasShelters = (situation.live_delta?.shelters?.length ?? 0) > 0;
-  const hasPhrases  = (situation.country_context?.key_phrases?.length ?? 0) > 0;
-  const hasContext  = !!situation.country_context?.country;
-  const hasMap      = false; // offline map not implemented yet
-  return [
-    hasContext  ? 'active' : 'idle',
-    hasShelters ? 'active' : 'idle',
-    hasPhrases  ? 'active' : 'idle',
-    hasMap      ? 'active' : 'idle',
-  ];
+function statusColor(status: AgentOp['status'] | 'idle' | 'offline') {
+  if (status === 'active')  return Colors.warning;
+  if (status === 'done')    return '#22C55E';
+  if (status === 'error')   return Colors.accent;
+  if (status === 'offline') return Colors.accent;
+  return '#27272A';
 }
 
-export function AgentsStrip({ isOnline, situation }: { isOnline: boolean; situation: SituationObject | null }) {
-  const states = getDotStates(isOnline, situation);
-  const dotColor = (s: DotState) => {
-    if (s === 'active')  return Colors.textPrimary;
-    if (s === 'offline') return Colors.accent;
-    return '#27272A';
-  };
+export function AgentsStrip({ agents, isConnected }: { agents: AgentOp[]; isConnected: boolean }) {
+  const latest = new Map<string, AgentOp['status']>();
+  for (const op of agents) latest.set(op.agent, op.status);
+
+  const lastOp = agents[agents.length - 1];
 
   return (
     <View style={styles.container}>
-      <Text style={styles.label}>SCOUT</Text>
+      <View style={styles.top}>
+        <Text style={styles.label}>AGENTS</Text>
+        {lastOp && (
+          <Text style={styles.lastAction} numberOfLines={1}>
+            {lastOp.agent} — {lastOp.detail}
+          </Text>
+        )}
+      </View>
       <View style={styles.dots}>
-        {states.map((s, i) => (
-          <View key={i} style={[styles.dot, { backgroundColor: dotColor(s) }]} />
-        ))}
+        {AGENTS.map((name) => {
+          const status = !isConnected ? 'offline' : (latest.get(name) ?? 'idle');
+          return (
+            <View key={name} style={styles.agent}>
+              <View style={[styles.dot, { backgroundColor: statusColor(status) }]} />
+              <Text style={[styles.name, status === 'active' && { color: Colors.warning }]}>
+                {name.toUpperCase()}
+              </Text>
+            </View>
+          );
+        })}
       </View>
     </View>
   );
@@ -45,8 +51,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     borderRadius: Radius.md,
-    paddingVertical: Spacing.sm,
-    paddingHorizontal: Spacing.sm + 2,
+    padding: Spacing.sm + 2,
+    gap: Spacing.xs,
+  },
+  top: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -57,14 +65,33 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     color: Colors.textMuted,
   },
+  lastAction: {
+    fontFamily: Fonts.mono,
+    fontSize: Fonts.size.xxs,
+    color: Colors.textMuted,
+    flex: 1,
+    textAlign: 'right',
+    marginLeft: 8,
+  },
   dots: {
     flexDirection: 'row',
-    gap: 5,
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+  },
+  agent: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 4,
   },
   dot: {
-    width: 5,
-    height: 5,
+    width: 6,
+    height: 6,
     borderRadius: 3,
+  },
+  name: {
+    fontFamily: Fonts.mono,
+    fontSize: Fonts.size.xxs,
+    letterSpacing: 0.6,
+    color: '#3F3F46',
   },
 });

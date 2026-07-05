@@ -1,6 +1,10 @@
 export interface UserLocation {
   station: string;
-  level: string;
+  level?: string;
+  lat?: number;
+  lng?: number;
+  accuracy_m?: number;
+  source?: string;
 }
 
 export interface UserProfile {
@@ -18,25 +22,18 @@ export interface CrisisEvent {
 
 export interface EnvironmentEntry {
   src: string;
-  ja: string;
   en: string;
+  ja?: string;
   t: string;
-}
-
-export interface Coordinates {
-  lat: number;
-  lng: number;
 }
 
 export interface Shelter {
   name: string;
-  type: string;
-  address: string;
+  lat?: number;
+  lng?: number;
   dist_m: number;
   step_free: boolean;
   capacity: string;
-  coordinates?: Coordinates;
-  source: string;
 }
 
 export interface LiveDelta {
@@ -46,32 +43,18 @@ export interface LiveDelta {
   as_of: string | null;
 }
 
-export interface KeyPhrase {
-  local: string;
-  en: string;
-  romanized: string;
+export interface Route {
+  target: string;
+  distance_m: number;
+  duration_s: number;
+  first_step: string | null;
+  coords?: [number, number][];
 }
 
-export interface EmbassyInfo {
-  nationality: string;
-  address: string;
-  phone: string;
-  emergency_line: string;
-}
-
-export interface CountryContext {
-  country: string;
-  city: string;
-  emergency_numbers: Record<string, string>;
-  embassy?: EmbassyInfo;
-  key_phrases: KeyPhrase[];
-  protocols: string[];
-}
-
-export interface Alert {
-  source: string;
-  severity: string;
-  message: string;
+export interface AgentOp {
+  agent: string;
+  status: 'active' | 'done' | 'error';
+  detail: string;
   t: string;
 }
 
@@ -95,8 +78,8 @@ export interface SituationObject {
   event: CrisisEvent;
   environment: EnvironmentEntry[];
   live_delta: LiveDelta;
-  country_context: CountryContext | null;
-  active_alerts: Alert[];
+  route: Route | null;
   guidance: Guidance;
+  agents: AgentOp[];
   network: NetworkState;
 }

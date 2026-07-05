@@ -1,30 +1,34 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { Colors, Fonts, Radius, Spacing } from '@/constants/theme';
 
 interface Props {
   text: string | null;
   needsTap: boolean;
-  isOfflineSource: boolean;
   onConfirm: () => void;
+  isEarthquake?: boolean;
 }
 
-export function GuidanceCard({ text, needsTap, isOfflineSource, onConfirm }: Props) {
+export function GuidanceCard({ text, needsTap, onConfirm, isEarthquake }: Props) {
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, isEarthquake && styles.cardActive]}>
       <View style={styles.header}>
-        <Text style={styles.label}>CURRENT INSTRUCTION</Text>
-        {isOfflineSource && (
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>ON-DEVICE</Text>
+        {isEarthquake && (
+          <View style={styles.alertChip}>
+            <Text style={styles.alertChipText}>QUAKE ACTIVE</Text>
           </View>
         )}
+        <Text style={styles.label}>GUIDANCE AEGIS</Text>
       </View>
-      <Text style={styles.text}>
-        {text ?? 'Waiting for guidance...'}
+
+      <Text style={[styles.text, !text && styles.textEmpty]}>
+        {text ?? 'En attente de données...'}
       </Text>
+
       {needsTap && (
         <Pressable onPress={onConfirm} style={styles.confirmBtn}>
-          <Text style={styles.confirmText}>CONFIRM ›</Text>
+          <Feather name="check" size={12} color={Colors.background} />
+          <Text style={styles.confirmText}>CONFIRM</Text>
         </Pressable>
       )}
     </View>
@@ -38,53 +42,64 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     borderRadius: Radius.lg,
     padding: Spacing.md,
-    gap: Spacing.xs,
+    gap: Spacing.sm,
+  },
+  cardActive: {
+    borderColor: 'rgba(255,77,46,0.5)',
+    backgroundColor: 'rgba(255,77,46,0.05)',
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 2,
+    gap: Spacing.xs,
+  },
+  alertChip: {
+    backgroundColor: Colors.accent,
+    borderRadius: Radius.sm,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  alertChipText: {
+    fontFamily: Fonts.mono,
+    fontSize: Fonts.size.xxs,
+    letterSpacing: 1,
+    color: Colors.background,
+    fontWeight: '700',
   },
   label: {
     fontFamily: Fonts.mono,
     fontSize: Fonts.size.xxs,
-    letterSpacing: 1.6,
+    letterSpacing: 1.4,
     color: Colors.textMuted,
   },
-  badge: {
-    borderWidth: 1,
-    borderColor: 'rgba(255,77,46,0.3)',
-    borderRadius: Radius.sm,
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    backgroundColor: 'rgba(255,77,46,0.08)',
-  },
-  badgeText: {
-    fontFamily: Fonts.mono,
-    fontSize: 7,
-    letterSpacing: 0.8,
-    color: Colors.accent,
-  },
   text: {
-    fontSize: Fonts.size.md,
+    fontSize: Fonts.size.lg,
     fontWeight: '600',
     color: Colors.textPrimary,
-    lineHeight: 21,
+    lineHeight: 26,
+  },
+  textEmpty: {
+    color: Colors.textMuted,
+    fontSize: Fonts.size.md,
+    fontWeight: '400',
+    fontStyle: 'italic',
   },
   confirmBtn: {
-    marginTop: Spacing.xs,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
     alignSelf: 'flex-start',
-    borderWidth: 1,
-    borderColor: Colors.border,
+    backgroundColor: Colors.accent,
     borderRadius: Radius.sm,
     paddingHorizontal: Spacing.sm,
-    paddingVertical: 4,
+    paddingVertical: 6,
+    marginTop: 2,
   },
   confirmText: {
     fontFamily: Fonts.mono,
     fontSize: Fonts.size.xxs,
-    letterSpacing: 1.0,
-    color: Colors.textMuted,
+    letterSpacing: 1.2,
+    color: Colors.background,
+    fontWeight: '700',
   },
 });

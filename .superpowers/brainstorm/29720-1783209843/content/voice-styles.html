@@ -1,0 +1,376 @@
+<h2>AEGIS — Voice Screen Visual Direction</h2>
+<p class="subtitle">Each card shows the main screen Maria sees during the Tokyo earthquake. Pick the one that feels like a real, serious app.</p>
+
+<style>
+.phone-grid {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 24px;
+}
+.phone-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+}
+.phone-wrap.selected .phone-frame {
+  outline: 3px solid #fff;
+  outline-offset: 4px;
+}
+.phone-frame {
+  width: 220px;
+  height: 440px;
+  border-radius: 32px;
+  overflow: hidden;
+  position: relative;
+  flex-shrink: 0;
+  border: 1px solid #333;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+  transition: outline 0.15s;
+}
+.phone-label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: #fff;
+  text-align: center;
+}
+.phone-sub {
+  font-size: 11px;
+  color: #666;
+  text-align: center;
+  max-width: 200px;
+}
+
+/* ── STYLE A: Raw Black ── */
+.style-a {
+  background: #000;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+  color: #fff;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.sa-status {
+  padding: 10px 14px 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.sa-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: #fff;
+  display: inline-block; margin-right: 5px;
+}
+.sa-status-text { font-size: 9px; color: #555; letter-spacing: 0.08em; }
+.sa-status-right { font-size: 9px; color: #555; font-variant-numeric: tabular-nums; }
+.sa-alert {
+  margin: 0 12px;
+  background: #FF2020;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.sa-alert-title { color: #fff; margin-bottom: 2px; }
+.sa-alert-body { color: rgba(255,255,255,0.7); font-weight: 400; font-size: 8px; }
+.sa-guidance {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+}
+.sa-guidance-text {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #fff;
+}
+.sa-mic-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-bottom: 20px;
+  gap: 8px;
+}
+.sa-mic {
+  width: 72px; height: 72px;
+  border-radius: 50%;
+  border: 1.5px solid #333;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 28px;
+  background: #0D0D0D;
+}
+.sa-mic-label { font-size: 9px; color: #444; letter-spacing: 0.1em; }
+.sa-tabs {
+  display: flex;
+  border-top: 1px solid #1A1A1A;
+  background: #000;
+}
+.sa-tab {
+  flex: 1; padding: 8px 0 10px;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  font-size: 7px; color: #444;
+}
+.sa-tab.active { color: #fff; }
+.sa-tab-icon { font-size: 14px; }
+
+/* ── STYLE B: Field Tool ── */
+.style-b {
+  background: #0C0C0C;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #fff;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.sb-header {
+  background: #111;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid #1E1E1E;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.sb-logo { font-size: 11px; font-weight: 800; letter-spacing: 0.2em; color: #fff; }
+.sb-badge {
+  background: #fff;
+  color: #000;
+  font-size: 7px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+}
+.sb-event {
+  background: #1A0000;
+  border-left: 3px solid #FF2020;
+  margin: 10px 12px;
+  padding: 7px 10px;
+  border-radius: 0 4px 4px 0;
+}
+.sb-event-label { font-size: 7px; color: #FF2020; letter-spacing: 0.12em; font-weight: 700; margin-bottom: 3px; }
+.sb-event-text { font-size: 9px; color: #fff; font-weight: 500; }
+.sb-guidance-box {
+  margin: 0 12px;
+  background: #161616;
+  border: 1px solid #2A2A2A;
+  border-radius: 8px;
+  padding: 10px;
+}
+.sb-guidance-label { font-size: 7px; color: #555; letter-spacing: 0.12em; margin-bottom: 4px; }
+.sb-guidance-text { font-size: 12px; color: #fff; line-height: 1.45; font-weight: 500; }
+.sb-mic-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.sb-mic {
+  width: 80px; height: 80px;
+  border-radius: 50%;
+  border: 2px solid #2A2A2A;
+  background: #111;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 30px;
+}
+.sb-mic-hint { font-size: 8px; color: #444; letter-spacing: 0.1em; }
+.sb-tabs {
+  display: flex;
+  border-top: 1px solid #1A1A1A;
+  background: #0C0C0C;
+  padding-bottom: 8px;
+}
+.sb-tab { flex: 1; padding: 8px 0; text-align: center; font-size: 7px; color: #3A3A3A; }
+.sb-tab.active { color: #fff; }
+.sb-tab-icon { font-size: 14px; display: block; margin-bottom: 2px; }
+
+/* ── STYLE C: Alert System ── */
+.style-c {
+  background: #080808;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #fff;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.sc-topbar {
+  padding: 8px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #151515;
+}
+.sc-name { font-size: 9px; color: #555; font-weight: 600; letter-spacing: 0.1em; }
+.sc-online { display: flex; align-items: center; gap: 4px; }
+.sc-online-dot { width: 5px; height: 5px; border-radius: 50%; background: #fff; }
+.sc-online-text { font-size: 8px; color: #666; }
+.sc-big-alert {
+  margin: 10px 12px;
+  border: 1px solid #FF2020;
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.sc-alert-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
+.sc-alert-src { font-size: 7px; color: #FF2020; font-weight: 700; letter-spacing: 0.15em; font-family: monospace; }
+.sc-alert-sev { font-size: 7px; color: #FF2020; font-family: monospace; }
+.sc-alert-msg { font-size: 9px; color: #ccc; }
+.sc-instruction {
+  padding: 12px 14px;
+  flex: 1;
+}
+.sc-inst-label { font-size: 7px; color: #444; letter-spacing: 0.15em; margin-bottom: 6px; font-family: monospace; }
+.sc-inst-text { font-size: 16px; color: #fff; font-weight: 600; line-height: 1.35; }
+.sc-confirm-btn {
+  margin: 0 14px;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 6px;
+  text-align: center;
+  font-size: 9px;
+  color: #666;
+  letter-spacing: 0.1em;
+}
+.sc-mic-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px 0 12px;
+  gap: 6px;
+}
+.sc-mic {
+  width: 68px; height: 68px;
+  border-radius: 50%;
+  border: 1px solid #222;
+  background: #0D0D0D;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 26px;
+}
+.sc-mic-label { font-size: 8px; color: #333; letter-spacing: 0.12em; font-family: monospace; }
+.sc-tabs {
+  display: flex;
+  border-top: 1px solid #151515;
+  padding-bottom: 8px;
+}
+.sc-tab { flex: 1; padding: 8px 0; text-align: center; }
+.sc-tab-icon { font-size: 13px; display: block; margin-bottom: 2px; }
+.sc-tab-label { font-size: 7px; color: #333; font-family: monospace; letter-spacing: 0.08em; }
+.sc-tab.active .sc-tab-label { color: #fff; }
+.sc-tab.active .sc-tab-icon { filter: brightness(1); }
+.sc-tab:not(.active) .sc-tab-icon { opacity: 0.3; }
+</style>
+
+<div class="phone-grid">
+
+  <!-- STYLE A -->
+  <div class="phone-wrap" onclick="this.classList.toggle('selected'); recordChoice('a', 'Raw Black — absolute minimum')">
+    <div class="phone-frame">
+      <div class="style-a">
+        <div class="sa-status">
+          <span><span class="sa-dot"></span><span class="sa-status-text">EN LIGNE · aegis-maria-001</span></span>
+          <span class="sa-status-right">23:14</span>
+        </div>
+        <div class="sa-alert">
+          <div class="sa-alert-title">⚠ JMA · SÉISME M6.8 TOKYO</div>
+          <div class="sa-alert-body">Shinjuku · Intensité 5+ · Restez à l'abri</div>
+        </div>
+        <div class="sa-guidance">
+          <div class="sa-guidance-text">Restez sous la table. Attendez la fin des secousses avant de vous lever.</div>
+        </div>
+        <div class="sa-mic-area">
+          <div class="sa-mic">🎙</div>
+          <div class="sa-mic-label">MAINTENIR POUR PARLER</div>
+        </div>
+        <div class="sa-tabs">
+          <div class="sa-tab active"><div class="sa-tab-icon">🎙</div>VOIX</div>
+          <div class="sa-tab"><div class="sa-tab-icon">🗺</div>CARTE</div>
+          <div class="sa-tab"><div class="sa-tab-icon">🔒</div>VAULT</div>
+        </div>
+      </div>
+    </div>
+    <div class="phone-label">A — Raw Black</div>
+    <div class="phone-sub">Absolute minimum. Only what matters. Text is the UI.</div>
+  </div>
+
+  <!-- STYLE B -->
+  <div class="phone-wrap" onclick="this.classList.toggle('selected'); recordChoice('b', 'Field Tool — structured, dense')">
+    <div class="phone-frame">
+      <div class="style-b">
+        <div class="sb-header">
+          <span class="sb-logo">AEGIS</span>
+          <span class="sb-badge">EN LIGNE</span>
+        </div>
+        <div class="sb-event">
+          <div class="sb-event-label">SÉISME ACTIF — TOKYO</div>
+          <div class="sb-event-text">M6.8 · Shinjuku · Intensité 5+</div>
+        </div>
+        <div class="sb-guidance-box">
+          <div class="sb-guidance-label">INSTRUCTION</div>
+          <div class="sb-guidance-text">Restez sous la table. Attendez la fin des secousses avant de vous lever.</div>
+        </div>
+        <div class="sb-mic-area">
+          <div class="sb-mic">🎙</div>
+          <div class="sb-mic-hint">MAINTENIR POUR PARLER</div>
+        </div>
+        <div class="sb-tabs">
+          <div class="sb-tab active"><span class="sb-tab-icon">🎙</span>VOIX</div>
+          <div class="sb-tab"><span class="sb-tab-icon">🗺</span>CARTE</div>
+          <div class="sb-tab"><span class="sb-tab-icon">🔒</span>VAULT</div>
+        </div>
+      </div>
+    </div>
+    <div class="phone-label">B — Field Tool</div>
+    <div class="phone-sub">Structured, labeled sections. Feels like a professional tool.</div>
+  </div>
+
+  <!-- STYLE C -->
+  <div class="phone-wrap" onclick="this.classList.toggle('selected'); recordChoice('c', 'Alert System — monospace data, dominant text')">
+    <div class="phone-frame">
+      <div class="style-c">
+        <div class="sc-topbar">
+          <span class="sc-name">MARIA · SHINJUKU B2</span>
+          <div class="sc-online"><div class="sc-online-dot"></div><span class="sc-online-text">EN LIGNE</span></div>
+        </div>
+        <div class="sc-big-alert">
+          <div class="sc-alert-row">
+            <span class="sc-alert-src">JMA</span>
+            <span class="sc-alert-sev">INTENSITÉ 5+</span>
+          </div>
+          <div class="sc-alert-msg">Séisme M6.8 — Restez à l'intérieur</div>
+        </div>
+        <div class="sc-instruction">
+          <div class="sc-inst-label">INSTRUCTION EN COURS</div>
+          <div class="sc-inst-text">Restez sous la table. Attendez la fin des secousses.</div>
+        </div>
+        <div class="sc-confirm-btn">CONFIRMER ▸</div>
+        <div class="sc-mic-area">
+          <div class="sc-mic">🎙</div>
+          <div class="sc-mic-label">MAINTENIR POUR PARLER</div>
+        </div>
+        <div class="sc-tabs">
+          <div class="sc-tab active"><span class="sc-tab-icon">🎙</span><span class="sc-tab-label">VOIX</span></div>
+          <div class="sc-tab"><span class="sc-tab-icon">🗺</span><span class="sc-tab-label">CARTE</span></div>
+          <div class="sc-tab"><span class="sc-tab-icon">🔒</span><span class="sc-tab-label">VAULT</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="phone-label">C — Alert System</div>
+    <div class="phone-sub">Mono data, large readable instruction. Clinical and precise.</div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="text-align:center; margin-top: 24px;">Click a phone to select. You can pick more than one. Tell me in the terminal what feels right — or what's wrong with each.</p>
+
+<script>
+function recordChoice(choice, label) {
+  if (window.toggleSelect) {
+    // use built-in if available
+  }
+}
+</script>
