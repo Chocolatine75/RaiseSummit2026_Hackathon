@@ -283,18 +283,19 @@ export default function App() {
   }, [g.headline, g.current_instruction_en]);
   function speak(t) {
     if (!voiceRef.current.unlocked) return;
+    // ONE VOICE ONLY. Always silence any in-flight speech first so two never
+    // overlap (the "two voices at once / fuzzy" bug).
+    try { if ("speechSynthesis" in window) speechSynthesis.cancel(); } catch {}
+    if (audioRef.current) { try { audioRef.current.pause(); audioRef.current.src = ""; audioRef.current.load(); } catch {} audioRef.current = null; }
     if (!offline) {
-      try { 
-        if (audioRef.current) {
-          audioRef.current.pause();
-          audioRef.current.src = "";
-          audioRef.current.load();
-        }
-        const a = new Audio(`/api/speak?text=${encodeURIComponent(t)}&session=${session}`); 
-        audioRef.current = a; 
-        a.play().catch(() => sysSpeak(t)); 
-      } catch { 
-        sysSpeak(t); 
+      try {
+        const a = new Audio(`/api/speak?text=${encodeURIComponent(t)}&session=${session}`);
+        audioRef.current = a;
+        // Only fall back to browser TTS on a genuine playback FAILURE — never as a
+        // parallel voice while the real audio is just loading.
+        a.play().catch(() => { if (audioRef.current === a) sysSpeak(t); });
+      } catch {
+        sysSpeak(t);
       }
     } else sysSpeak(t);
   }
