@@ -670,6 +670,8 @@ export class SessionDO {
     } catch (err) {
       console.error("Multi-agent reasoning error:", err);
       const fallback = deterministicGuidance(s);
+      s.guidance.action = fallback.action;
+      s.guidance.headline = fallback.headline;
       s.guidance.current_instruction_en = fallback.current_instruction_en;
       s.guidance.next_question = `${fallback.next_question} (reasoning offline: ${String(err).slice(0, 70)})`;
       s.guidance.needs_tap = fallback.needs_tap;
@@ -716,6 +718,8 @@ function deterministicGuidance(s) {
   if (route && bestShelter) {
     const age = s.live_delta?.as_of ? `${Math.max(0, Math.round((Date.now() - new Date(s.live_delta.as_of)) / 1000))} seconds old` : "not timestamped";
     return {
+      action: "EVACUATE NOW",
+      headline: `Move step-free to ${bestShelter.name}`,
       current_instruction_en:
         `Take the ${route.replaceAll("_", " ")}. Avoid stairs. ${bestShelter.name} is open, step-free, ${bestShelter.dist_m} meters away. Live data is ${age}.`,
       next_question: "Is the west concourse ramp clear where you are?",
@@ -725,6 +729,8 @@ function deterministicGuidance(s) {
 
   if (last?.src === "sign" && /closed/i.test(last.en || "")) {
     return {
+      action: "AVOID EXIT",
+      headline: "This exit is closed",
       current_instruction_en: `Do not use this exit. ${last.en}. Stay with staff flow and look for the step-free west concourse.`,
       next_question: "Can you see a ramp or staff pointing to the west concourse?",
       needs_tap: true,
@@ -733,6 +739,8 @@ function deterministicGuidance(s) {
 
   if (last?.en) {
     return {
+      action: "STAY ALERT",
+      headline: last.en.slice(0, 30) + (last.en.length > 30 ? "..." : ""),
       current_instruction_en: `Update: ${last.en}`,
       next_question: "Are you safe and away from stairs right now?",
       needs_tap: false,
@@ -741,6 +749,8 @@ function deterministicGuidance(s) {
 
   if (s.event?.type === "earthquake") {
     return {
+      action: "DROP, COVER",
+      headline: "Earthquake detected — protect head",
       current_instruction_en: "Earthquake detected. Stay low, protect your head, keep your child close, and do not use stairs until a safe route is confirmed.",
       next_question: "Are you away from platform edges and falling objects?",
       needs_tap: false,
@@ -748,6 +758,8 @@ function deterministicGuidance(s) {
   }
 
   return {
+    action: "MONITORING",
+    headline: "AEGIS is watching for safe updates",
     current_instruction_en: "Stay aware. I am watching for safe, step-free updates.",
     next_question: "Where are you standing right now?",
     needs_tap: false,
