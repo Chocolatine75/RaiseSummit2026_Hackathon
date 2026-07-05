@@ -1,5 +1,5 @@
-import { StyleSheet, Text, View } from 'react-native';
-import { Colors, Fonts } from '@/constants/theme';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Colors, Fonts, Spacing } from '@/constants/theme';
 
 interface Props {
   sessionId: string;
@@ -7,51 +7,48 @@ interface Props {
   isConnected: boolean;
   isOfflineMode: boolean;
   lastSync: string | null;
+  onLongPress?: () => void;
 }
 
-export function StatusStrip({ sessionId, scoutEnvId, isConnected, isOfflineMode, lastSync }: Props) {
-  const statusColor = isOfflineMode ? Colors.offline : isConnected ? Colors.online : Colors.warning;
-  const statusText = isOfflineMode ? 'OFFLINE' : isConnected ? 'LIVE' : 'CONNECTING';
+export function StatusStrip({ sessionId, isConnected, isOfflineMode, lastSync, onLongPress }: Props) {
+  const dotColor = isOfflineMode ? Colors.accent : Colors.online;
+  const time = lastSync ? new Date(lastSync).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '--:--';
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.text} numberOfLines={1}>
-        SESSION: {sessionId.slice(0, 16)}  ENV: {scoutEnvId ? scoutEnvId.slice(0, 8) : '——'}
-      </Text>
-      <View style={styles.row}>
-        <View style={[styles.dot, { backgroundColor: statusColor }]} />
-        <Text style={[styles.text, { color: statusColor }]}>{statusText}</Text>
-        {lastSync && (
-          <Text style={[styles.text, { marginLeft: 8 }]}>
-            sync {lastSync.slice(11, 19)}
-          </Text>
-        )}
+    <Pressable onLongPress={onLongPress} delayLongPress={800}>
+      <View style={styles.container}>
+        <View style={styles.left}>
+          <View style={[styles.dot, { backgroundColor: dotColor }]} />
+          <Text style={styles.text}>{sessionId}</Text>
+        </View>
+        <Text style={styles.text}>{time}</Text>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
   },
-  row: {
+  left: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 2,
+    gap: 6,
   },
   dot: {
-    width: 6,
-    height: 6,
+    width: 5,
+    height: 5,
     borderRadius: 3,
-    marginRight: 5,
   },
   text: {
     fontFamily: Fonts.mono,
-    fontSize: Fonts.size.xs,
+    fontSize: Fonts.size.xxs,
     color: Colors.textMuted,
+    letterSpacing: 0.8,
   },
 });

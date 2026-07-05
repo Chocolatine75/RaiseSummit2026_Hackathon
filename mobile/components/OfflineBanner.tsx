@@ -1,25 +1,35 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { Colors, Fonts } from '@/constants/theme';
+import { Colors, Fonts, Spacing } from '@/constants/theme';
 
 export function OfflineBanner() {
   return (
-    <View style={styles.banner}>
-      <Text style={styles.text}>● HORS LIGNE — VAULT LOCAL ACTIF</Text>
+    <View style={styles.container}>
+      <View style={styles.dot} />
+      <Text style={styles.text}>OFFLINE — GEMMA ACTIVE</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  banner: {
-    backgroundColor: Colors.offline,
-    paddingVertical: 8,
+  container: {
+    backgroundColor: Colors.accent,
+    flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: 6,
+    gap: 6,
+  },
+  dot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.6)',
   },
   text: {
-    color: '#fff',
-    fontSize: Fonts.size.sm,
     fontFamily: Fonts.mono,
-    fontWeight: '700',
-    letterSpacing: 1,
+    fontSize: Fonts.size.xxs,
+    letterSpacing: 1.4,
+    color: '#FFFFFF',
+    fontWeight: '500',
   },
 });
