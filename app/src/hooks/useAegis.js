@@ -8,7 +8,17 @@ const CACHE_KEY = `aegis_state_${SESSION}`;
 
 export function useAegis() {
   const [state, setState] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(CACHE_KEY)) || null; } catch { return null; }
+    // Restore cached state for offline resilience, but start every fresh page
+    // load with a CLEAN conversation — no stale chat survives a reload. We wipe
+    // it from localStorage too, so nothing (offline restore included) revives it.
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (!raw) return null;
+      const s = JSON.parse(raw);
+      s.environment = [];
+      localStorage.setItem(CACHE_KEY, JSON.stringify(s));
+      return s;
+    } catch { return null; }
   });
   const [offline, setOffline] = useState(false);
   const wsRef = useRef(null);
@@ -27,8 +37,19 @@ export function useAegis() {
   // goOnline() can re-establish the socket after a demo "Cut the network".
   const connectRef = useRef(null);
   const aliveRef = useRef(true);
+  const chatClearedRef = useRef(false);
+  const chatSettledRef = useRef(false);
   useEffect(() => {
     aliveRef.current = true;
+    // Fresh page load → clear any stale conversation on the backend BEFORE the
+    // socket streams state, so no old chat is ever rendered. Fire-and-forget.
+    if (!chatClearedRef.current) {
+      chatClearedRef.current = true;
+      fetch(`/event?session=${SESSION}`, { method: "POST", body: JSON.stringify({ type: "clear_chat", payload: {}, src: "client", t: new Date().toISOString() }) })
+        .finally(() => { chatSettledRef.current = true; });
+      // safety: settle after 2s even if the request stalls
+      setTimeout(() => { chatSettledRef.current = true; }, 2000);
+    }
     const connect = () => {
       const proto = location.protocol === "https:" ? "wss" : "ws";
       const ws = new WebSocket(`${proto}://${location.host}/ws?session=${SESSION}`);
@@ -37,7 +58,11 @@ export function useAegis() {
         if (forcedRef.current) return; // pinned offline for the demo
         const s = JSON.parse(m.data);
         s.network = { ...s.network, last_serialized_to_device: new Date().toISOString() };
-        localStorage.setItem(CACHE_KEY, JSON.stringify(s));
+        // Until the on-load clear_chat has round-tripped, suppress any stale
+        // conversation so a reload never briefly shows old chat.
+        if (!chatSettledRef.current) s.environment = [];
+        // Cache for offline resilience, but never persist the ephemeral chat.
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ ...s, environment: [] }));
         setState(s);
         setOffline(false);
         if (s?.user?.location?.lat) prepareRegion(s.user.location);
@@ -89,8 +114,9 @@ export function useAegis() {
             updateLocation(lat, lng, accuracy);
           }
         },
-        (err) => {
-          console.warn("Geolocation watch failed:", err);
+        () => {
+          // No device GPS (denied/unavailable) → seamlessly use the Tokyo demo
+          // location. This is expected, not an error, so we don't log noise.
           if (!fallbackInterval) startSimulatedTokyoGPS();
         },
         { enableHighAccuracy: true, maximumAge: 5000, timeout: 8000 }

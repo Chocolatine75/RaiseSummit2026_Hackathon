@@ -24,8 +24,17 @@ export default function MapView({ state, active, offline }) {
 
     const recenter = () => { const c = layersRef.current.user?.getLatLng(); if (c) map.setView(c, 16, { animate: true }); };
     window.addEventListener("aegis-recenter", recenter);
+    // focus a specific place (e.g. tapping "Nearest hospital" in Support) — pan
+    // there from the current location and open its label.
+    const focus = (e) => {
+      const d = e.detail || {}; if (d.lat == null) return;
+      map.setView([d.lat, d.lng], 17, { animate: true });
+      L.popup({ closeButton: true }).setLatLng([d.lat, d.lng]).setContent(`<b>${d.name || "Here"}</b>`).openOn(map);
+    };
+    window.addEventListener("aegis-focus", focus);
     return () => {
       window.removeEventListener("aegis-recenter", recenter);
+      window.removeEventListener("aegis-focus", focus);
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;

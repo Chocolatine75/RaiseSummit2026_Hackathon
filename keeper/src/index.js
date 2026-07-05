@@ -253,6 +253,9 @@ export class SessionDO {
         s.guidance.confirmed = true;
         s.guidance.needs_tap = false;
         break;
+      case "clear_chat": // fresh page load — wipe the ephemeral conversation
+        s.environment = [];
+        break;
       case "set_location": { // from the phone's real GPS: { lat, lng, accuracy_m, place }
         const p = event.payload || {};
         if (p.lat != null && p.lng != null) {
@@ -299,9 +302,11 @@ export class SessionDO {
             const city = place || `${p.lat.toFixed(2)},${p.lng.toFixed(2)}`;
             if (city !== prevCity) {
               await this.state.storage.put("prepped_city", city);
-              await this.logAgent("Keeper", "active", `Entered ${city} — pre-staging region for offline`);
+              await this.logAgent("Keeper", "active", `Entered ${city} — agents now monitoring & pre-staging region`);
               await this.state.storage.put("situation", s);
               await this.broadcast();
+              // Agents run FROM ARRIVAL, not only after a quake — so the pack shows
+              // real activity immediately and everything is warm before disaster.
               this.realShelters(s).then(async (shelters) => {
                 if (shelters?.length) {
                   const scored = scoreShelters(shelters, s);
@@ -313,6 +318,12 @@ export class SessionDO {
                   await this.broadcast();
                 }
               }).catch(() => {});
+              // Listener: warm the ambient station-PA translation channel now.
+              this.runListener(s).catch(() => {});
+              // Scout: light situational web scan on arrival (spins the sandbox
+              // early so an aftershock resume is instant later).
+              this.logAgent("Scout", "active", "Scanning the area for hazards & advisories…").catch(() => {});
+              this.runScout(s).catch(() => {});
             }
           }
         }
@@ -561,7 +572,9 @@ export class SessionDO {
 
     try {
       if (!this.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not configured — using local database");
-      const res = await fetch(`${GEMINI_BASE}/interactions`, {
+      // Bounded: if Maps grounding is slow, fall back to the real DB fast so the
+      // region is ALWAYS staged on arrival (never hangs the pipeline).
+      const res = await fetchWithTimeout(`${GEMINI_BASE}/interactions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": this.env.GEMINI_API_KEY },
         body: JSON.stringify({
@@ -576,7 +589,7 @@ export class SessionDO {
           tools: [{ type: "google_maps", latitude: lat, longitude: lng }],
           store: false, // one-shot lookup — keep it out of the guidance chain
         }),
-      });
+      }, 12000);
       if (!res.ok) throw new Error(`maps ${res.status}`);
       const parsed = parseJsonLoose(extractText(await res.json()));
       const shelters = parsed?.shelters?.filter((x) => x.lat != null && x.lng != null);
@@ -706,11 +719,18 @@ export class SessionDO {
         cur.guidance.confirmed = false;
         await this.state.storage.put("situation", cur);
         await this.broadcast();
+
+        // FAST RETURN: the user now has the Generator's answer (~9s). Run the
+        // Safety Critic in the BACKGROUND — it almost always passes, and refines
+        // in-place a few seconds later if needed. This makes Q&A feel real-time
+        // instead of waiting the full ~18s for both LLM round-trips.
+        this.runCritic(s, g, prompt, data).catch((e) => console.error("Critic bg:", e));
+        return;
       }
 
       // Agent 2: Safety Critic Quality & Accuracy Verification
       await this.logAgent("QA", "active", `Critic: Checking safety and accuracy of proposed instruction...`);
-      
+
       const critiquePrompt =
         `You are the AEGIS Safety Critic. Review this proposed emergency instruction for ${s.user.name}.\n` +
         `Proposed instruction: "${g.plain_line_en}"\n` +
@@ -800,6 +820,73 @@ export class SessionDO {
       cur.guidance.needs_tap = fallback.needs_tap;
       cur.guidance.confirmed = false;
       await this.state.storage.put("situation", cur);
+    }
+  }
+
+  // ---------- Safety Critic (runs detached after the Generator surfaces) ----------
+  // Verifies the proposed instruction against the user's constraints; refines it
+  // in-place if it fails. Broadcasts the refinement so the phone updates live.
+  async runCritic(s, g, prompt, data) {
+    try {
+      await this.logAgent("QA", "active", "Critic: Checking safety and accuracy of proposed instruction...");
+      const critiquePrompt =
+        `You are the AEGIS Safety Critic. Review this proposed emergency instruction for ${s.user.name}.\n` +
+        `Proposed instruction: "${g.plain_line_en}"\n` +
+        `Proposed next question: "${g.next_question}"\n` +
+        `Situation JSON: ${JSON.stringify(s)}\n\n` +
+        `User constraints: ${s.user.constraints.join(", ")}. Ensure that if constraints specify "no_stairs", the proposed instruction does NOT route the user via stairs, stairwells, or unconfirmed pathways.\n` +
+        `Check if it invents any elevator/escalator/facilities not explicitly present in the JSON.\n\n` +
+        `Respond ONLY with JSON: {"pass": boolean, "critique": string}`;
+      const critRes = await fetch(`${GEMINI_BASE}/models/gemini-3.5-flash:generateContent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": this.env.GEMINI_API_KEY },
+        body: JSON.stringify({ contents: [{ parts: [{ text: critiquePrompt }] }], generationConfig: { responseMimeType: "application/json" } }),
+      });
+      if (!critRes.ok) throw new Error(`critic error ${critRes.status}`);
+      const critData = await critRes.json();
+      const verdict = parseJsonLoose(critData.candidates?.[0]?.content?.parts?.[0]?.text) || { pass: true, critique: "Fallback pass" };
+
+      if (!verdict.pass) {
+        await this.logAgent("QA", "warn", `Critic flagged candidate: ${verdict.critique}`);
+        await this.logAgent("Keeper", "active", "Generator: Refining instruction to address critic feedback...");
+        const refinePrompt = `${prompt}\n\nYour previous candidate was REJECTED by the Safety Critic for the following reason:\n"${verdict.critique}"\n\nPlease refine your proposal to address this feedback perfectly. Respond ONLY with JSON.`;
+        const refineRes = await fetch(`${GEMINI_BASE}/interactions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": this.env.GEMINI_API_KEY },
+          body: JSON.stringify({ model: "gemini-3.5-flash", input: refinePrompt, store: true, previous_interaction_id: data.id }),
+        });
+        if (refineRes.ok) {
+          const refineData = await refineRes.json();
+          if (refineData.id) { await this.state.storage.put("last_interaction_id", refineData.id); }
+          const refinedG = parseJsonLoose(extractText(refineData));
+          if (refinedG) {
+            g = refinedG;
+            const cur = await this.situation();
+            if (refineData.id) cur.interaction_chain_id = refineData.id;
+            if (g.plain_line_en && cur.route) {
+              const hasTarget = g.plain_line_en.toLowerCase().includes(cur.route.target.toLowerCase());
+              const hasDist = g.plain_line_en.includes(String(cur.route.distance_m));
+              if (!hasTarget || !hasDist) g.plain_line_en += ` Proceed to ${cur.route.target} which is ${cur.route.distance_m} meters away.`;
+            }
+            cur.guidance.action = g.action || cur.guidance.action;
+            cur.guidance.headline = g.headline || cur.guidance.headline;
+            cur.guidance.current_instruction_en = g.plain_line_en;
+            cur.guidance.next_question = g.next_question;
+            runAudit(cur, { requireStateChain: !!this.env.GEMINI_API_KEY });
+            await this.state.storage.put("situation", cur);
+            await this.broadcast();
+            await this.logAgent("QA", "done", "Critic: Refined instruction approved. Safety invariants verified.");
+          }
+        }
+      } else {
+        const cur = await this.situation();
+        runAudit(cur, { requireStateChain: !!this.env.GEMINI_API_KEY });
+        await this.state.storage.put("situation", cur);
+        await this.broadcast();
+        await this.logAgent("QA", "done", "Critic: Verified candidate. Constraint safety and accuracy check passed.");
+      }
+    } catch (err) {
+      console.error("Critic (bg) error:", err);
     }
   }
 

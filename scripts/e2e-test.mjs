@@ -42,14 +42,22 @@ let s = await get("/api/state");
 check("fresh session has user + constraints", s.user?.constraints?.includes("no_stairs"));
 check("fresh session has no route yet", !s.route);
 
-// 3. Real GPS location
+// 3. Real GPS location — this ALSO pre-stages the region (shelters + agents)
+// on arrival, exactly like the real demo (arrive in the city, then quake).
 await post("/event", { type: "set_location", payload: { lat: 35.6905, lng: 139.7005, accuracy_m: 8 }, src: "gps" });
 s = await get("/api/state");
 check("GPS location accepted", s.user.location.source === "device_gps", `lat=${s.user.location.lat}`);
 
+// Wait for the arrival pre-cache (shelters staged to the edge before disaster).
+console.log("\n  … waiting for on-arrival region pre-staging (≤30s) …\n");
+for (let i = 0; i < 30; i++) {
+  await wait(1000);
+  s = await get("/api/state");
+  if (s.live_delta?.shelters?.length) break;
+}
+
 // 4. Quake → the /event returns instantly (guidance in <1s); the agent
-// pipeline runs detached and streams results in. Poll until the route lands
-// (or 60s), instead of a fixed wait — this reflects the real async flow.
+// pipeline runs detached and streams results in. Poll until the route lands.
 console.log("\n  … firing quake, polling for the detached pipeline (≤60s) …\n");
 await post("/event", { type: "quake", payload: { magnitude: "5+" }, src: "test" });
 for (let i = 0; i < 60; i++) {

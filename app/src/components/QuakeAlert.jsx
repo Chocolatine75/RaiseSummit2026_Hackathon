@@ -16,9 +16,9 @@ export default function QuakeAlert({ state, onOpen }) {
   }, [translated, onOpen]);
 
   // Auto-clear even if the user never taps, so the push never sits over the
-  // guidance/transcript. Longer window (8s) so there's time to read + tap.
+  // guidance/transcript. 6s: enough to read + tap, gone before it blocks content.
   useEffect(() => {
-    const t = setTimeout(() => { setDismissed(true); onOpen?.(); }, 8000);
+    const t = setTimeout(() => { setDismissed(true); onOpen?.(); }, 6000);
     return () => clearTimeout(t);
   }, [onOpen]);
 

@@ -69,7 +69,10 @@ export default function App() {
     try {
       const genai = window.tasksGenAI;
       if (!genai) {
-        throw new Error("MediaPipe TasksGenAI not loaded. Ensure network or scripts are correct.");
+        // On-device model runtime unavailable in this environment — the offline
+        // chat uses the deterministic situational fallback instead. Not an error.
+        setGemmaStatus("fallback");
+        return;
       }
       setGemmaProgress(40);
       const filesetResolver = await genai.FilesetResolver.forGenAiTasks(
@@ -147,7 +150,8 @@ export default function App() {
     };
     rec.lang = langMap[lang] || "en-US";
     rec.onstart = () => setListening(true);
-    rec.onend = () => setListening(false);
+    // when the tap mic finishes, hand the mic back to the wake-word listener
+    rec.onend = () => { setListening(false); if (wakeOnRef.current) { wakeAliveRef.current = true; try { wakeRef.current?.start(); } catch {} } };
     rec.onerror = () => setListening(false);
     rec.onresult = (e) => {
       const t = e.results[0]?.[0]?.transcript;
@@ -164,7 +168,53 @@ export default function App() {
     };
   }, [emit, lang, offline, gemmaStatus]);
 
-  const toggleMic = () => { const rec = recRef.current; if (!rec) return; if (listening) rec.stop(); else { try { rec.start(); } catch {} } };
+  // ── Hands-free WAKE WORD: always listening for "hey AEGIS …". When heard, the
+  // rest of the sentence becomes the question and is answered automatically — no
+  // tap. Runs as a separate continuous recognizer that self-restarts (browsers
+  // auto-stop on silence). The tap mic stays as a reliable fallback. ──
+  const [wakeOn, setWakeOn] = useState(() => localStorage.getItem("aegis_wake") !== "0");
+  const [wakeHeard, setWakeHeard] = useState(false);
+  const wakeRef = useRef(null);
+  const wakeAliveRef = useRef(false);
+  const wakeOnRef = useRef(wakeOn);
+  useEffect(() => { wakeOnRef.current = wakeOn; }, [wakeOn]);
+
+  // Only ONE speech recognizer can hold the mic at a time. Starting the tap mic
+  // pauses the always-on wake-word listener; it resumes when the tap mic ends.
+  const toggleMic = () => {
+    const rec = recRef.current; if (!rec) return;
+    if (listening) { rec.stop(); }
+    else { try { wakeAliveRef.current = false; wakeRef.current?.stop(); } catch {} try { rec.start(); } catch {} }
+  };
+
+  useEffect(() => { localStorage.setItem("aegis_wake", wakeOn ? "1" : "0"); }, [wakeOn]);
+  useEffect(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR || !wakeOn) { wakeAliveRef.current = false; try { wakeRef.current?.stop(); } catch {} return; }
+    wakeAliveRef.current = true;
+    const w = new SR(); w.continuous = true; w.interimResults = true;
+    w.lang = ({ en:"en-US", ja:"ja-JP", zh:"zh-CN", ko:"ko-KR", es:"es-ES", fr:"fr-FR" })[lang] || "en-US";
+    w.onresult = (e) => {
+      const txt = Array.from(e.results).map((r) => r[0]?.transcript || "").join(" ").toLowerCase();
+      // wake phrases: "hey aegis", "hey ", "ok aegis", or Japanese "ねえ"
+      const m = txt.match(/(?:hey|ok|okay|ねえ|エイジス)\s*(?:aegis|イージス)?[,\s]*(.*)/);
+      if (m && (txt.includes("aegis") || txt.includes("hey") || txt.includes("ねえ"))) {
+        const q = (m[1] || "").trim();
+        if (q.length > 3) {          // got a real question after the wake word
+          setWakeHeard(true);
+          try { w.stop(); } catch {}
+          handleUserUtterance(q);
+          setTimeout(() => setWakeHeard(false), 1800);
+        }
+      }
+    };
+    // self-restart on silence, but only if we still own the mic (tap mic not active)
+    w.onend = () => { if (wakeAliveRef.current) setTimeout(() => { if (wakeAliveRef.current) { try { w.start(); } catch {} } }, 250); };
+    w.onerror = () => {};
+    wakeRef.current = w;
+    try { w.start(); } catch {}
+    return () => { wakeAliveRef.current = false; try { w.stop(); } catch {} };
+  }, [wakeOn, lang, offline, gemmaStatus]);
 
   const handleWarp = async (city) => {
     if (!city) return;
@@ -378,13 +428,17 @@ export default function App() {
                       </>
                     ) : (
                       <>
-                        <div className="orb-wrap" style={{ margin: "16px 0 2px" }}>
-                          <div className={`orb ${listening ? "listening on-red" : ""}`} style={{ width: 68, height: 68 }} onClick={toggleMic}>
-                            {listening && <span className="ring" />}
-                            <span className="core" style={{ width: 46, height: 46 }}><Icon name="mic" size={20} /></span>
-                          </div>
+                        {/* Hands-free hero: always listening for "Hey AEGIS". Tiny mic = fallback. */}
+                        <div className={`wake ${wakeHeard ? "heard" : ""} ${wakeOn ? "on" : "off"}`} onClick={() => setWakeOn((v) => !v)}>
+                          <span className="wake-dot">{[0,1,2].map((i) => <span key={i} className="wave" />)}</span>
+                          <span className="wake-txt">
+                            <b>{wakeHeard ? "Heard you — answering…" : wakeOn ? "Listening for “Hey AEGIS”" : "Hands-free off"}</b>
+                            <span>{wakeOn ? "Just say “Hey AEGIS, what should I do?”" : "Tap to turn on hands-free"}</span>
+                          </span>
+                          <button className="wake-mic" onClick={(e) => { e.stopPropagation(); toggleMic(); }} title="Tap to speak">
+                            {listening && <span className="ring" />}<Icon name="mic" size={16} />
+                          </button>
                         </div>
-                        <div className="orb-label">{listening ? "Listening — speak now" : active ? "Tap to ask by voice" : "Tap to speak — it answers out loud"}</div>
                         {/* alternative text chat online, if the user prefers typing */}
                         <div className="composer" style={{ marginTop: 12 }}>
                           <input
@@ -410,7 +464,7 @@ export default function App() {
             )}
 
             {tab === "map" && <MapTab state={state} />}
-            {tab === "support" && <SupportTab hospital={hospital} />}
+            {tab === "support" && <SupportTab hospital={hospital} onHospital={() => { if (!hospital) return; setTab("map"); setTimeout(() => window.dispatchEvent(new CustomEvent("aegis-focus", { detail: { lat: hospital.lat, lng: hospital.lng, kind: "hospital", name: hospital.name } })), 260); }} />}
             {tab === "privacy" && <PrivacyTab consent={consent} setConsent={setConsent} lang={lang} setLang={setLang} state={state} offline={offline} onOffline={forceOffline} onOnline={goOnline} />}
 
             <nav className="nav">
@@ -553,7 +607,7 @@ function MapTab({ state }) {
 }
 
 /* ── Support tab ── */
-function SupportTab({ hospital }) {
+function SupportTab({ hospital, onHospital }) {
   return (
     <div className="view">
       <div className="view-title">Support</div>
@@ -564,7 +618,11 @@ function SupportTab({ hospital }) {
         ))}
       </div>
       <div className="card row-card"><div className="row-ico" style={{ background: "var(--blue-dim)" }}><Icon name="headphones" size={17} style={{ color: "var(--blue)" }} /></div><div className="row-body"><div className="row-name">Chat with a person</div><div className="row-sub">~2 min wait · translated live</div></div><button className="row-btn">Connect</button></div>
-      <div className="card row-card"><div className="row-ico" style={{ background: "var(--green-dim)" }}><Icon name="building" size={17} style={{ color: "var(--green)" }} /></div><div className="row-body"><div className="row-name">Nearest hospital</div><div className="row-sub">{hospital ? `${hospital.name} · ${hospital.dist_m} m` : "Locating…"}</div></div><Icon name="chevronR" size={16} style={{ color: "var(--ink-3)" }} /></div>
+      <button className="card row-card" disabled={!hospital} onClick={onHospital} style={{ width: "100%", textAlign: "left" }}>
+        <div className="row-ico" style={{ background: "var(--green-dim)" }}><Icon name="building" size={17} style={{ color: "var(--green)" }} /></div>
+        <div className="row-body"><div className="row-name">Nearest hospital</div><div className="row-sub">{hospital ? `${hospital.name} · ${hospital.dist_m} m · tap to view on map` : "Locating…"}</div></div>
+        <Icon name="chevronR" size={16} style={{ color: "var(--ink-3)" }} />
+      </button>
     </div>
   );
 }
