@@ -23,9 +23,12 @@ export function useAegis() {
     else fetch(`/event?session=${SESSION}`, { method: "POST", body: JSON.stringify(ev) }).catch(() => {});
   }, []);
 
-  // WebSocket connection with auto-reconnect.
+  // WebSocket connection with auto-reconnect. connect() is stored in a ref so
+  // goOnline() can re-establish the socket after a demo "Cut the network".
+  const connectRef = useRef(null);
+  const aliveRef = useRef(true);
   useEffect(() => {
-    let alive = true;
+    aliveRef.current = true;
     const connect = () => {
       const proto = location.protocol === "https:" ? "wss" : "ws";
       const ws = new WebSocket(`${proto}://${location.host}/ws?session=${SESSION}`);
@@ -37,13 +40,14 @@ export function useAegis() {
         localStorage.setItem(CACHE_KEY, JSON.stringify(s));
         setState(s);
         setOffline(false);
-        if (!packedRef.current && s?.user?.location?.lat) prepareRegion(s.user.location);
+        if (s?.user?.location?.lat) prepareRegion(s.user.location);
       };
-      ws.onclose = () => { setOffline(true); if (alive && !forcedRef.current) setTimeout(connect, 3000); };
+      ws.onclose = () => { setOffline(true); if (aliveRef.current && !forcedRef.current) setTimeout(connect, 3000); };
       ws.onerror = () => ws.close();
     };
+    connectRef.current = connect;
     connect();
-    return () => { alive = false; wsRef.current?.close(); };
+    return () => { aliveRef.current = false; wsRef.current?.close(); };
   }, []);
 
   // Real GPS + automatic new-region detection.
@@ -63,9 +67,13 @@ export function useAegis() {
     return () => navigator.geolocation.clearWatch(id);
   }, [emit]);
 
-  // Region prep: cache map tiles for offline (a designed moment).
+  // Region prep: cache map tiles for offline (a designed moment). Re-runs when
+  // the user enters a NEW area (>1.5km from the last prep) so warping to another
+  // city during the demo re-caches that city's tiles.
   async function prepareRegion(loc) {
-    packedRef.current = true;
+    const prev = packedRef.current;
+    if (prev && distM(prev, loc) < 1500) return; // already cached this area
+    packedRef.current = { lat: loc.lat, lng: loc.lng };
     const name = loc.station && loc.station !== "—" ? loc.station : "this area";
     setRegionPrep({ title: `Preparing ${name} for offline`, sub: "Downloading map tiles…", done: false });
     try {
@@ -89,7 +97,13 @@ export function useAegis() {
   }
 
   const forceOffline = useCallback(() => { forcedRef.current = true; wsRef.current?.close(); setOffline(true); }, []);
-  const goOnline = useCallback(() => { forcedRef.current = false; setOffline(false); }, []);
+  const goOnline = useCallback(() => {
+    forcedRef.current = false;
+    setOffline(false);
+    // The socket was closed by forceOffline and never auto-reconnected (pinned);
+    // re-establish it now so aftershocks and confirmations flow again.
+    if (!wsRef.current || wsRef.current.readyState > 1) connectRef.current?.();
+  }, []);
   return { state, offline, emit, regionPrep, session: SESSION, forceOffline, goOnline };
 }
 

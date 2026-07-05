@@ -1141,3 +1141,86 @@ body.offline #freshness::before { background: var(--amber); }
 .qalert-orig { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--hair);
   font-size: 11px; color: var(--dim); line-height: 1.4;
   font-family: "Hiragino Sans", "Yu Gothic", sans-serif; }
+
+/* ═══════════ PANIC-MODE guidance cards (v2) ═══════════ */
+/* Keep the sheet compact so the map stays visible. One thing per card, big. */
+.app .sheet { max-height: 46dvh; }
+.gcards { display: flex; flex-direction: column; }
+.gcard-viewport { min-height: 132px; }
+.gcard { animation: gcIn .28s cubic-bezier(.2,.9,.2,1); }
+@keyframes gcIn { from { opacity: 0; transform: translateX(14px); } }
+
+/* action card — the immediate imperative, huge */
+.gc-action { font-size: 40px; font-weight: 850; letter-spacing: -.03em; line-height: .98;
+  color: #fff; text-transform: uppercase; }
+.gc-headline { margin-top: 10px; font-size: 18px; font-weight: 700; letter-spacing: -.02em;
+  line-height: 1.25; color: var(--ink); text-wrap: balance; }
+.gc-detail { margin-top: 10px; font-size: 14px; line-height: 1.5; color: var(--ink-soft); }
+.gc-more { margin-top: 10px; background: rgba(255,255,255,.06); border: 1px solid var(--hair);
+  color: var(--ink-soft); font-size: 12.5px; font-weight: 650; padding: 6px 13px; border-radius: 9px; }
+
+/* shelter card — the decision */
+.gc-go { font-size: 15px; font-weight: 800; letter-spacing: .16em; color: var(--safe); }
+.app.offline .gc-go { color: var(--amber); }
+.gc-dest { margin-top: 4px; font-size: 25px; font-weight: 800; letter-spacing: -.025em; line-height: 1.1;
+  color: #fff; }
+.gc-meta { margin-top: 9px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.gc-eta { font-size: 22px; font-weight: 800; letter-spacing: -.02em; color: var(--safe); }
+.app.offline .gc-eta { color: var(--amber); }
+.gc-dist { font-size: 15px; font-weight: 650; color: var(--ink-soft); }
+.gc-via { font-size: 12.5px; color: var(--dim); }
+.gc-why { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 7px; }
+.gc-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 650;
+  color: var(--safe); background: rgba(51,201,183,.12); border: 1px solid rgba(51,201,183,.28);
+  padding: 5px 10px; border-radius: 8px; }
+.gc-chip .icn { color: var(--safe); }
+.app.offline .gc-chip { color: var(--amber); background: rgba(245,179,1,.12); border-color: rgba(245,179,1,.3); }
+.app.offline .gc-chip .icn { color: var(--amber); }
+
+/* hospital card */
+.gc-tag { font-size: 13px; font-weight: 750; letter-spacing: .04em; color: #ff8a8f; text-transform: uppercase; }
+.gcard.hospital .gc-dest { font-size: 22px; }
+.gc-open { font-size: 12.5px; color: var(--safe); font-weight: 650; }
+
+/* footer: swipe dots + confirm */
+.gc-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; }
+.gc-dots { display: flex; gap: 7px; }
+.gc-dots span { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,.18); transition: all .2s; cursor: pointer; }
+.gc-dots span.on { background: var(--safe); width: 20px; border-radius: 4px; }
+.app.offline .gc-dots span.on { background: var(--amber); }
+.gc-confirm { background: var(--safe); color: var(--safe-ink); border: 0; font-weight: 800;
+  font-size: 14px; padding: 11px 20px; border-radius: 13px; letter-spacing: -.01em; }
+.gc-confirm:active { transform: scale(.97); }
+.app.offline .gc-confirm { background: var(--amber); color: var(--amber-ink); }
+
+/* ═══════════ engine room: ambient motion + live metrics ═══════════ */
+.ambient { color: var(--go); }
+.engine.off .ambient { color: var(--alert); }
+
+.engine-metrics { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin: 12px 0; }
+.emetric { padding: 10px 12px; border-radius: 11px; background: var(--ink-850);
+  border: 1px solid var(--hair-2); transition: all .3s; }
+.emetric.on { border-color: rgba(51,201,183,.28); background: rgba(51,201,183,.05); }
+.engine.off .emetric.on { border-color: rgba(245,179,1,.28); background: rgba(245,179,1,.05); }
+.em-label { font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--tx-lo); }
+.em-value { margin-top: 5px; font-size: 16px; font-weight: 800; letter-spacing: -.02em; color: var(--tx-mid); }
+.emetric.on .em-value { color: var(--go); }
+.engine.off .emetric.on .em-value { color: var(--alert); }
+.em-value.mono { font-family: var(--mono); font-size: 13px; font-weight: 600; }
+
+.hospital-pin { font-size: 20px; filter: drop-shadow(0 2px 6px #000); text-align: center; line-height: 1; }
+
+/* ═══════════ map pins: clean markers, no emoji ═══════════ */
+.pin { display: grid; place-items: center; }
+.pin .pin-glyph { font-size: 16px; line-height: 1; }
+.pin.shelter { color: var(--go); }
+.pin.shelter .pin-glyph { color: var(--go); text-shadow: 0 0 8px rgba(51,201,183,.6); opacity: .7; }
+.pin.shelter.best .pin-glyph { opacity: 1; font-size: 22px;
+  text-shadow: 0 0 14px rgba(51,201,183,.9); animation: pinPulse 1.8s ease-in-out infinite; }
+@keyframes pinPulse { 50% { transform: scale(1.15); } }
+.pin.hospital .pin-cross { width: 18px; height: 18px; border-radius: 5px; background: #ff5a5f;
+  box-shadow: 0 0 10px rgba(255,90,95,.5); position: relative; }
+.pin.hospital .pin-cross::before, .pin.hospital .pin-cross::after {
+  content: ""; position: absolute; background: #fff; border-radius: 1px; }
+.pin.hospital .pin-cross::before { left: 8px; top: 4px; width: 2px; height: 10px; }
+.pin.hospital .pin-cross::after { top: 8px; left: 4px; height: 2px; width: 10px; }

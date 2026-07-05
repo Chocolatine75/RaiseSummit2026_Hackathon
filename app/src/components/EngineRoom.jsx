@@ -78,6 +78,19 @@ export default function EngineRoom({ state, offline }) {
           return <line key={"w" + n} className={`wire ${lit(n) ? "on" : ""}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />;
         })}
 
+        {/* ambient heartbeat: a faint particle always drifting on every wire so
+            the system NEVER looks frozen — even at rest it reads as alive */}
+        {ORDER.map((n, k) => {
+          const a = NODES.Keeper, b = NODES[n];
+          return (
+            <circle key={"amb" + n} className="ambient" r="0.7" fill="currentColor">
+              <animate attributeName="cx" values={`${a.x};${b.x};${a.x}`} dur={`${3.2 + k * 0.4}s`} repeatCount="indefinite" />
+              <animate attributeName="cy" values={`${a.y};${b.y};${a.y}`} dur={`${3.2 + k * 0.4}s`} repeatCount="indefinite" />
+              <animate attributeName="opacity" values="0;0.6;0" dur={`${3.2 + k * 0.4}s`} repeatCount="indefinite" />
+            </circle>
+          );
+        })}
+
         {/* travelling pulses (data flowing Keeper → agent) */}
         {pulses.map((p) => {
           const a = NODES.Keeper, b = NODES[p.to];
@@ -113,6 +126,16 @@ export default function EngineRoom({ state, offline }) {
         ))}
       </div>
 
+      {/* live metrics — real numbers from the Situation Object, always current */}
+      <div className="engine-metrics">
+        <Metric label="Shelters" value={state?.live_delta?.shelters?.length || 0} on={!!state?.live_delta?.shelters?.length} />
+        <Metric label="Hospitals" value={state?.live_delta?.hospitals?.length || 0} on={!!state?.live_delta?.hospitals?.length} />
+        <Metric label="Route" value={state?.route?.distance_m ? `${state.route.distance_m} m` : "—"} on={!!state?.route} />
+        <Metric label="Latency" value={state?.timing?.last_reason_ms ? `${(state.timing.last_reason_ms / 1000).toFixed(1)} s` : "—"} on={!!state?.timing?.last_reason_ms} />
+        <Metric label="Antigravity" value={state?.scout_environment_id ? shortId(state.scout_environment_id) : "—"} on={!!state?.scout_environment_id} mono />
+        <Metric label="Safety QA" value={state?.audit?.status && state.audit.status !== "idle" ? state.audit.status.toUpperCase() : "—"} on={state?.audit?.status === "pass"} />
+      </div>
+
       {/* narrator strip: the single latest real thing an agent did */}
       <div className="engine-ticker">
         {latest ? (
@@ -124,6 +147,16 @@ export default function EngineRoom({ state, offline }) {
           <span className="tick-detail idle">Standing by — monitoring for seismic alerts.</span>
         )}
       </div>
+    </div>
+  );
+}
+
+function shortId(id) { return id ? `${String(id).slice(0, 8)}…` : "—"; }
+function Metric({ label, value, on, mono }) {
+  return (
+    <div className={`emetric ${on ? "on" : ""}`}>
+      <div className="em-label">{label}</div>
+      <div className={`em-value ${mono ? "mono" : ""}`}>{value}</div>
     </div>
   );
 }

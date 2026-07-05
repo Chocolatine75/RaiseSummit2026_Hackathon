@@ -20,6 +20,7 @@ export default function MapView({ state, active }) {
       icon: L.divIcon({ className: "user-pin", html: '<div class="core"></div>', iconSize: [18, 18] }),
     }).addTo(map);
     layersRef.current.shelters = L.layerGroup().addTo(map);
+    layersRef.current.hospitals = L.layerGroup().addTo(map);
     mapRef.current = map;
   }, []);
 
@@ -33,20 +34,33 @@ export default function MapView({ state, active }) {
 
     const sl = layersRef.current.shelters;
     sl.clearLayers();
-    (state.live_delta?.shelters || []).forEach((sh) => {
+    (state.live_delta?.shelters || []).forEach((sh, i) => {
       if (sh.lat == null) return;
-      const open = sh.capacity === "open";
+      // The top-ranked shelter (i===0) is the chosen destination — mark it.
+      const best = i === 0;
       L.marker([sh.lat, sh.lng], {
-        icon: L.divIcon({ className: `shelter-pin ${open ? "" : "full"}`, html: open ? "🟢" : "⛔", iconSize: [24, 24] }),
-      }).addTo(sl).bindPopup(`<b>${sh.name}</b><br>${sh.dist_m}m · ${sh.step_free ? "step-free ✓" : "stairs"}`);
+        icon: L.divIcon({ className: `pin shelter ${best ? "best" : ""}`,
+          html: `<span class="pin-glyph">◈</span>`, iconSize: [26, 26], iconAnchor: [13, 13] }),
+      }).addTo(sl).bindPopup(`<b>${sh.name}</b><br>${sh.dist_m}m · ${sh.step_free ? "step-free" : "stairs"}${sh.score ? ` · score ${sh.score}` : ""}`);
+    });
+
+    const hl = layersRef.current.hospitals;
+    hl.clearLayers();
+    (state.live_delta?.hospitals || []).forEach((hp) => {
+      if (hp.lat == null) return;
+      L.marker([hp.lat, hp.lng], {
+        icon: L.divIcon({ className: "pin hospital", html: `<span class="pin-cross"></span>`, iconSize: [24, 24], iconAnchor: [12, 12] }),
+      }).addTo(hl).bindPopup(`<b>${hp.name}</b><br>${hp.dist_m}m · emergency medical`);
     });
 
     if (layersRef.current.route) layersRef.current.route.remove();
     if (layersRef.current.casing) layersRef.current.casing.remove();
     const r = state.route;
     if (r?.coords?.length) {
-      layersRef.current.casing = L.polyline(r.coords, { color: "#052b1e", weight: 12, opacity: .6, lineJoin: "round" }).addTo(map);
-      layersRef.current.route = L.polyline(r.coords, { color: "#19e08a", weight: 7, opacity: .96, lineJoin: "round", lineCap: "round" }).addTo(map);
+      const off = state.network && state.network.online === false;
+      const line = off ? "#f5b301" : "#33c9b7";
+      layersRef.current.casing = L.polyline(r.coords, { color: "#02201c", weight: 12, opacity: .6, lineJoin: "round" }).addTo(map);
+      layersRef.current.route = L.polyline(r.coords, { color: line, weight: 6, opacity: .96, lineJoin: "round", lineCap: "round" }).addTo(map);
       try { map.fitBounds(layersRef.current.route.getBounds().pad(0.3)); } catch {}
     }
   }, [state]);

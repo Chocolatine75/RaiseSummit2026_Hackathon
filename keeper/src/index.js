@@ -47,7 +47,7 @@ function freshState() {
     },
     event: { type: null, magnitude_reported: null, t0: null },
     environment: [], // translated PA lines + sign readings, newest last
-    live_delta: { exits_down: [], official_evac_direction: null, shelters: [], as_of: null },
+    live_delta: { exits_down: [], official_evac_direction: null, shelters: [], hospitals: [], as_of: null },
     route: null, // real OSRM walking route to the chosen shelter: {target, distance_m, duration_s, coords, first_step}
     guidance: { current_instruction_en: null, next_question: null, needs_tap: false, confirmed: false },
     audit: { status: "idle", checks: [], t: null }, // filled by runAudit + the Auditor agent
@@ -310,13 +310,22 @@ export class SessionDO {
       // Listener (translate JA PA), Scout (Antigravity web scan), and Maps
       // (grounding for real evac places) have no data dependency on each other,
       // so firing them together roughly thirds the time-to-guidance.
-      await this.logAgent("Maps", "active", "Querying Google Maps for real evacuation areas nearby");
-      const [, , shelters] = await Promise.all([
+      await this.logAgent("Maps", "active", "Querying Google Maps for evacuation areas & nearby hospitals");
+      const [, , shelters, hospitals] = await Promise.all([
         this.runListener(s).catch((e) => { this.logAgent("Listener", "error", String(e).slice(0, 120)); }),
         this.runScout(s).catch((e) => { this.logAgent("Scout", "error", String(e).slice(0, 120)); }),
         this.realShelters(s).catch((e) => { this.logAgent("Maps", "error", String(e).slice(0, 120)); return null; }),
+        this.realHospitals(s).catch(() => null),
       ]);
 
+      if (hospitals?.length) {
+        // Re-read the freshest state so we don't clobber what the other parallel
+        // agents (Listener translations, Scout env id) wrote concurrently.
+        const cur = await this.situation();
+        cur.live_delta.hospitals = hospitals;
+        await this.state.storage.put("situation", cur);
+        await this.logAgent("Maps", "done", `${hospitals.length} hospitals mapped · nearest ${hospitals[0].name} (${hospitals[0].dist_m}m)`);
+      }
       if (shelters?.length) {
         // Score every candidate against real-world decision factors, then let
         // the agent commit to ONE best shelter with an explainable "why".
@@ -506,6 +515,36 @@ export class SessionDO {
     }
   }
 
+  // ---------- Real hospitals: Grounding with Google Maps (nearest ER matters) ----------
+  async realHospitals(s) {
+    const { lat, lng } = s.user.location;
+    if (lat == null) return null;
+    try {
+      if (!this.env.GEMINI_API_KEY) throw new Error("no key");
+      const res = await fetch(`${GEMINI_BASE}/interactions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": this.env.GEMINI_API_KEY },
+        body: JSON.stringify({
+          model: "gemini-3.5-flash",
+          input:
+            `Using Google Maps, list up to 3 REAL hospitals or emergency medical ` +
+            `centers within 2km of latitude ${lat}, longitude ${lng}. Reply ONLY JSON: ` +
+            `{"hospitals":[{"name":string,"lat":number,"lng":number,"dist_m":number}]} — ` +
+            `only real places returned by Google Maps; do not invent any.`,
+          tools: [{ type: "google_maps", latitude: lat, longitude: lng }],
+          store: false,
+        }),
+      });
+      if (!res.ok) throw new Error(`maps ${res.status}`);
+      const parsed = parseJsonLoose(extractText(await res.json()));
+      const hospitals = parsed?.hospitals?.filter((x) => x.lat != null && x.lng != null);
+      if (hospitals?.length) return hospitals.map((h) => ({ ...h, open: true })).sort((a, b) => a.dist_m - b.dist_m).slice(0, 3);
+      throw new Error("none");
+    } catch {
+      return getClosestHospitals(lat, lng);
+    }
+  }
+
   // ---------- Guidance via the Interactions API (stateful — the judged primitive) ----------
   async reason(s) {
     const prevId = await this.state.storage.get("last_interaction_id");
@@ -514,15 +553,17 @@ export class SessionDO {
       `Her constraints: ${s.user.constraints.join(", ")}. Location: ${JSON.stringify(s.user.location)}.\n` +
       `Current situation JSON:\n${JSON.stringify(s)}\n\n` +
       `Latest development is the last entry of "environment" or the "live_delta". ` +
-      `Respond ONLY with JSON: {"surface_now": boolean, "plain_line_en": string, ` +
-      `"next_question": string, "needs_tap": boolean}. ` +
+      `The user is in PANIC. Guidance must be readable in one glance.\n` +
+      `Respond ONLY with JSON: {"surface_now": boolean, "action": string, ` +
+      `"headline": string, "plain_line_en": string, "next_question": string, "needs_tap": boolean}.\n` +
+      `- action: 1-3 WORD imperative, uppercase-friendly (e.g. "DROP, COVER", "GO NOW", "STAY PUT", "HEAD WEST").\n` +
+      `- headline: ONE short line, max 8 words, the single most important thing (e.g. "Move step-free to Kabukicho Park, 6 min").\n` +
+      `- plain_line_en: the fuller spoken instruction (max 2 short sentences) for voice + detail.\n` +
       `surface_now=true whenever the newest development gives ANY new actionable ` +
       `information — including the initial quake (immediate safety posture). ` +
-      `Only false for pure duplicates of guidance already given. ` +
-      `plain_line_en is ONE short spoken-style instruction respecting her constraints, ` +
-      `never inventing exits, elevators, escalators, shelters, distances, or staff locations not present in the JSON. ` +
-      `citing data freshness when using live_delta. needs_tap=true only when the ` +
-      `instruction changes her route or files something on her behalf.`;
+      `Only false for pure duplicates. Respect her constraints; never invent exits, ` +
+      `elevators, shelters, distances, or staff not present in the JSON. ` +
+      `needs_tap=true only when the instruction changes her route.`;
 
     if (s.route) {
       prompt += `\n\nCRITICAL DIRECTIVE: A walking route has been computed. Your plain_line_en instruction MUST explicitly mention the target shelter name ("${s.route.target}") and the exact walking distance in meters ("${s.route.distance_m} meters") so the user is guided accurately and consistently with the route.`;
@@ -619,6 +660,8 @@ export class SessionDO {
       }
 
       if (g && g.surface_now) {
+        s.guidance.action = g.action || null;
+        s.guidance.headline = g.headline || null;
         s.guidance.current_instruction_en = g.plain_line_en;
         s.guidance.next_question = g.next_question;
         s.guidance.needs_tap = !!g.needs_tap;
@@ -637,24 +680,28 @@ export class SessionDO {
 
   // ---------- Eyes: camera photo → Gemini vision → sign_read event ----------
   async handleEyes({ image_b64, mime_type = "image/jpeg" }) {
-    const res = await fetch(`${GEMINI_BASE}/models/gemini-3.5-flash:generateContent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": this.env.GEMINI_API_KEY },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { inline_data: { mime_type, data: image_b64 } },
-            { text: 'Read any Japanese text in this image. Reply ONLY with JSON: {"ja": string, "en": string, "type": "exit_closed"|"direction"|"other"}' },
-          ],
-        }],
-        generationConfig: { responseMimeType: "application/json" },
-      }),
-    });
-    if (!res.ok) return json({ ok: false, error: await res.text() }, 502);
-    const data = await res.json();
-    const sign = parseJsonLoose(data.candidates?.[0]?.content?.parts?.[0]?.text || "");
-    if (!sign?.en) return json({ ok: false, error: "no text found in image" }, 422);
-    return this.handleEvent({ type: "sign_read", payload: sign, src: "eyes" });
+    try {
+      const res = await fetch(`${GEMINI_BASE}/models/gemini-3.5-flash:generateContent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": this.env.GEMINI_API_KEY },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { inline_data: { mime_type, data: image_b64 } },
+              { text: 'Read any Japanese text in this image. Reply ONLY with JSON: {"ja": string, "en": string, "type": "exit_closed"|"direction"|"other"}' },
+            ],
+          }],
+          generationConfig: { responseMimeType: "application/json" },
+        }),
+      });
+      if (!res.ok) return json({ ok: false, error: await res.text() }, 502);
+      const data = await res.json();
+      const sign = parseJsonLoose(data.candidates?.[0]?.content?.parts?.[0]?.text || "");
+      if (!sign?.en) return json({ ok: false, error: "no text found in image" }, 422);
+      return this.handleEvent({ type: "sign_read", payload: sign, src: "eyes" });
+    } catch (e) {
+      return json({ ok: false, error: `vision unavailable: ${String(e).slice(0, 120)}` }, 503);
+    }
   }
 }
 
@@ -834,6 +881,25 @@ const REAL_SHELTERS_DB = [
   { name: "Parc du Champ de Mars Safe Area", lat: 48.855600, lng: 2.298600, step_free: true, capacity: "open" },
   { name: "Jardin des Tuileries Evacuation Site", lat: 48.863500, lng: 2.327500, step_free: true, capacity: "open" }
 ];
+
+// Real hospitals near the demo cities (fallback when Maps grounding is unavailable).
+const REAL_HOSPITALS_DB = [
+  { name: "Tokyo Medical University Hospital", lat: 35.6906, lng: 139.6957 },
+  { name: "JR Tokyo General Hospital", lat: 35.6820, lng: 139.6960 },
+  { name: "Shinjuku Ochiai Hospital", lat: 35.7098, lng: 139.6862 },
+  { name: "Keio University Hospital", lat: 35.6820, lng: 139.7175 },
+  { name: "Shibuya Chuo Clinic", lat: 35.6615, lng: 139.7040 },
+  // Paris (RAISE Summit)
+  { name: "Hôpital Lariboisière", lat: 48.8823, lng: 2.3520 },
+  { name: "Hôpital Saint-Louis", lat: 48.8735, lng: 2.3679 },
+];
+function getClosestHospitals(lat, lng, limit = 3) {
+  return REAL_HOSPITALS_DB.map((h) => {
+    const dLat = ((h.lat - lat) * Math.PI) / 180, dLng = ((h.lng - lng) * Math.PI) / 180;
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos((lat * Math.PI) / 180) * Math.cos((h.lat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+    return { ...h, dist_m: Math.round(2 * 6371000 * Math.asin(Math.sqrt(a))), open: true };
+  }).sort((a, b) => a.dist_m - b.dist_m).slice(0, limit);
+}
 
 function getClosestRealShelters(lat, lng, limit = 6) {
   return REAL_SHELTERS_DB.map(s => {

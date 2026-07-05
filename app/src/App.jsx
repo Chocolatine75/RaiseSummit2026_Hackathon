@@ -5,6 +5,7 @@ import CameraView from "./components/CameraView";
 import OfflineHandoff from "./components/OfflineHandoff";
 import EngineRoom from "./components/EngineRoom";
 import QuakeAlert from "./components/QuakeAlert";
+import GuidanceCards from "./components/GuidanceCards";
 import Icon from "./components/Icon";
 
 export default function App() {
@@ -237,7 +238,6 @@ export default function App() {
   };
 
   const statusText = offline ? "Offline · on-device" : quake ? "Guiding you" : "Monitoring";
-  const best = state?.live_delta?.shelters?.[0];
   const netLabel = offline ? "OFFLINE" : "5G";
 
   return (
@@ -342,28 +342,8 @@ export default function App() {
                       <p className="idle-sub">AEGIS is listening for earthquake warnings, station announcements, and evacuation notices — in your language.</p>
                     </div>
                   ) : (
-                    // The one instruction is the hero. Always visible, never scrolled away.
-                    <div className="hero">
-                      <p className="instruction">{g.current_instruction_en}</p>
-
-                      {/* the agent's single best decision + WHY it won */}
-                      {best?.why?.length > 0 && (
-                        <div className="verdict">
-                          <div className="verdict-why">
-                            {best.why.slice(0, 3).map((w, i) => (
-                              <span className="whychip" key={i}><Icon name="check" size={12} /> {w}</span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {(g.next_question || g.needs_tap) && (
-                        <div className="qRow">
-                          <p className="question">{g.next_question || ""}</p>
-                          {g.needs_tap && <button className="confirmBtn" onClick={() => emit("user_tap")}>Confirm</button>}
-                        </div>
-                      )}
-                    </div>
+                    // Panic-mode: one thing per swipe card, never a paragraph.
+                    <GuidanceCards state={state} offline={offline} onConfirm={() => emit("user_tap")} />
                   )}
 
                   <div className="askRow">
