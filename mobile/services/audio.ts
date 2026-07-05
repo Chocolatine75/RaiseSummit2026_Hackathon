@@ -29,7 +29,7 @@ export async function stopRecording(): Promise<string | null> {
     if (!uri) return null;
     // Encode to base64 for sending to backend
     return await FileSystem.readAsStringAsync(uri, {
-      encoding: FileSystem.EncodingType.Base64,
+      encoding: 'base64' as any,
     });
   } catch {
     recording = null;
