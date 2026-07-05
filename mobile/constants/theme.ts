@@ -1,34 +1,49 @@
+import { Platform } from 'react-native';
+
 export const Colors = {
-  background: '#0A0A0A',
-  surface: '#0F172A',
-  surfaceAlt: '#1E293B',
-  border: '#1E293B',
-  borderLight: '#334155',
+  background:    '#0C0C0C',
+  surface:       '#141414',
+  border:        'rgba(255,255,255,0.07)',
+  borderAccent:  'rgba(255,77,46,0.25)',
 
-  textPrimary: '#FFFFFF',
-  textSecondary: '#94A3B8',
-  textMuted: '#475569',
+  textPrimary:   '#FAFAFA',
+  textSecondary: '#A1A1AA',
+  textMuted:     '#3F3F46',
 
-  online: '#10B981',
-  offline: '#EF4444',
-  warning: '#F59E0B',
-  accent: '#6366F1',
+  accent:        '#FF4D2E',
+  warning:       '#F59E0B',
+  online:        '#FAFAFA',
 
-  stepFree: '#00FF66',
-  shelter: '#84CC16',
-
-  micIdle: '#1E293B',
-  micActive: '#DC2626',
+  // Semantic
+  micIdle:       '#141414',
+  micBorder:     'rgba(255,255,255,0.10)',
+  micActive:     '#FF4D2E',
 };
 
 export const Fonts = {
-  mono: 'Courier' as const,
+  body: undefined as string | undefined, // system default
+  mono: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'Courier New' }) as string,
   size: {
-    xs: 10,
-    sm: 12,
-    md: 14,
-    lg: 16,
-    xl: 20,
-    xxl: 28,
+    xxs: 8,
+    xs:  10,
+    sm:  12,
+    md:  14,
+    lg:  16,
+    xl:  20,
   },
+};
+
+export const Spacing = {
+  xs:  4,
+  sm:  8,
+  md:  12,
+  lg:  16,
+  xl:  20,
+  xxl: 24,
+};
+
+export const Radius = {
+  sm: 4,
+  md: 6,
+  lg: 10,
 };
