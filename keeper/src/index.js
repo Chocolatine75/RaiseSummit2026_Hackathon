@@ -709,9 +709,15 @@ export class SessionDO {
 
 function deterministicGuidance(s) {
   const shelters = s.live_delta?.shelters || [];
-  const bestShelter = shelters
+  const nearestOpen = shelters
     .filter((sh) => sh.capacity === "open" && sh.step_free)
     .sort((a, b) => (a.dist_m ?? Infinity) - (b.dist_m ?? Infinity))[0];
+  // Prefer the shelter the route actually goes to, so the spoken instruction, the
+  // destination card and the map never name two different places. (Computing the
+  // route mutates the target's dist_m to the real walking distance, which would
+  // otherwise let a straight-line-closer shelter win here.) Fall back to nearest.
+  const bestShelter =
+    (s.route?.target && shelters.find((sh) => sh.name === s.route.target)) || nearestOpen;
   const route = s.live_delta?.official_evac_direction;
   const last = s.environment?.at(-1);
 

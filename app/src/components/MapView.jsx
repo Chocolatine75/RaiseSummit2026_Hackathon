@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 
-// Premium dark basemap + real GPS dot + real shelters + real OSRM route.
+// Warm paper basemap + real GPS dot + real shelters + real OSRM route.
 export default function MapView({ state, active }) {
   const mapRef = useRef(null);
   const layersRef = useRef({});
@@ -11,9 +11,10 @@ export default function MapView({ state, active }) {
     if (mapRef.current) return;
     const center = [loc?.lat ?? 35.6896, loc?.lng ?? 139.7006];
     const map = L.map("map", { zoomControl: false, attributionControl: false }).setView(center, 16);
-    // CartoDB dark_all: a clean, label-light dark basemap made for navigation —
-    // no tourist POI clutter, so the route and shelters are the only signal.
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    // CartoDB Positron: a clean, label-light basemap made for navigation — no
+    // tourist POI clutter — warmed toward the mockup's paper map via CSS filter,
+    // so the green route and shelters are the only things that draw the eye.
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
       subdomains: "abcd", maxZoom: 20,
     }).addTo(map);
     layersRef.current.user = L.marker(center, {
@@ -58,9 +59,10 @@ export default function MapView({ state, active }) {
     const r = state.route;
     if (r?.coords?.length) {
       const off = state.network && state.network.online === false;
-      const line = off ? "#f5b301" : "#33c9b7";
-      layersRef.current.casing = L.polyline(r.coords, { color: "#02201c", weight: 12, opacity: .6, lineJoin: "round" }).addTo(map);
-      layersRef.current.route = L.polyline(r.coords, { color: line, weight: 6, opacity: .96, lineJoin: "round", lineCap: "round" }).addTo(map);
+      const line = off ? "#d98a1f" : "#35875f";       // amber offline · forest green online
+      const casing = off ? "#7a4c0e" : "#1a4e36";
+      layersRef.current.casing = L.polyline(r.coords, { color: casing, weight: 12, opacity: .28, lineJoin: "round", lineCap: "round" }).addTo(map);
+      layersRef.current.route = L.polyline(r.coords, { color: line, weight: 6, opacity: .95, lineJoin: "round", lineCap: "round" }).addTo(map);
       try { map.fitBounds(layersRef.current.route.getBounds().pad(0.3)); } catch {}
     }
   }, [state]);

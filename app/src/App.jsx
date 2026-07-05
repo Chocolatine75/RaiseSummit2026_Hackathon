@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useAegis } from "./hooks/useAegis";
 import MapView from "./components/MapView";
-import CameraView from "./components/CameraView";
 import OfflineHandoff from "./components/OfflineHandoff";
 import EngineRoom from "./components/EngineRoom";
 import QuakeAlert from "./components/QuakeAlert";
@@ -44,6 +43,13 @@ export default function App() {
   const r = state?.route;
   const quake = state?.event?.type === "earthquake";
   const active = quake || !!g.current_instruction_en; // there is a live instruction to show
+
+  // The chosen shelter behind the route, for the destination row.
+  const chosen = (state?.live_delta?.shelters || []).find((s) => s.name === r?.target)
+    || state?.live_delta?.shelters?.[0];
+  const destSub = chosen
+    ? `${chosen.capacity === "full" ? "Capacity unknown" : "Open"} · ${chosen.step_free ? "step-free" : "has stairs"} · nearest shelter`
+    : "nearest open shelter";
 
   const presetLocations = [
     { label: "Tokyo Tower", value: "Tokyo Tower" },
@@ -237,7 +243,7 @@ export default function App() {
     }
   };
 
-  const statusText = offline ? "Offline · on-device" : quake ? "Guiding you" : "Monitoring";
+  const statusText = offline ? "guiding offline" : active ? "active" : "on watch";
   const netLabel = offline ? "OFFLINE" : "5G";
 
   return (
@@ -259,7 +265,6 @@ export default function App() {
             {handoff && <OfflineHandoff state={state} onDone={() => setHandoff(false)} />}
             {showAlert && <QuakeAlert state={state} onOpen={() => setShowAlert(false)} />}
             <MapView state={state} active={tab === "map"} />
-            <CameraView state={state} session={session} active={tab === "cam"} />
 
             {tab === "chat" ? (
               <div className="chatView active">
@@ -293,12 +298,21 @@ export default function App() {
               </div>
             ) : (
               <>
-                {/* status pill */}
+                {/* status pill — brand + live state, top-left */}
                 <div className={`statusPill ${offline ? "offline" : "online"}`}>
-                  <span className="brand">AEGIS</span>
                   <span className="dot" />
-                  <span>{statusText}</span>
+                  <span className="brand">AEGIS</span>
+                  <span>· {statusText}</span>
                 </div>
+
+                {/* ETA pill — top-right, only while a route exists */}
+                {r?.coords?.length > 0 && (
+                  <div className="etaPill">
+                    <Icon name="arrow" size={14} />
+                    <b>{Math.max(1, Math.round(r.duration_s / 60))} min</b>
+                    <span>· {r.distance_m} m</span>
+                  </div>
+                )}
 
                 {/* region-prep toast */}
                 {regionPrep && (
@@ -306,18 +320,6 @@ export default function App() {
                     {!regionPrep.done && <div className="tspin" />}
                     {regionPrep.done && <div className="tdone"><Icon name="check" size={13} /></div>}
                     <div className="tbody"><b>{regionPrep.title}</b><span>{regionPrep.sub}</span></div>
-                  </div>
-                )}
-
-                {/* route banner */}
-                {r?.coords?.length > 0 && (
-                  <div className="routeBanner">
-                    <div className="rb-icon"><Icon name="shelter" size={22} /></div>
-                    <div className="rb-body">
-                      <div className="rb-eta"><b>{Math.max(1, Math.round(r.duration_s / 60))} min</b> <span>· {r.distance_m} m</span></div>
-                      <div className="rb-to">to {r.target}</div>
-                    </div>
-                    {r.first_step && <div className="rb-step">via {r.first_step}</div>}
                   </div>
                 )}
 
@@ -334,6 +336,18 @@ export default function App() {
                     </span>
                     {state?.live_delta?.as_of && <span className="ago">updated {age(state.live_delta.as_of)} ago</span>}
                   </div>
+
+                  {/* destination row — the chosen shelter */}
+                  {r?.coords?.length > 0 && (
+                    <div className="destRow">
+                      <span className="dc-ic"><Icon name="shelter" size={19} /></span>
+                      <div className="dc-body">
+                        <div className="dc-name">{r.target}</div>
+                        <div className="dc-sub">{destSub}</div>
+                      </div>
+                      <Icon name="chevron" size={15} className="dc-chev" />
+                    </div>
+                  )}
 
                   {!active ? (
                     // Purposeful idle state — not dead space.
@@ -357,7 +371,6 @@ export default function App() {
             {/* tab bar */}
             <nav className="tabbar">
               <button className={`tab ${tab === "map" ? "active" : ""}`} onClick={() => setTab("map")}><Icon name="map" size={22} /><span>Map</span></button>
-              <button className={`tab ${tab === "cam" ? "active" : ""}`} onClick={() => setTab("cam")}><Icon name="camera" size={22} /><span>Camera</span></button>
               <button className={`tab ${tab === "chat" ? "active" : ""}`} onClick={() => setTab("chat")}><Icon name="chat" size={22} /><span>Chat</span></button>
             </nav>
           </div>

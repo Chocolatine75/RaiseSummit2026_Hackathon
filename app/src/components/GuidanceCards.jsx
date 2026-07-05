@@ -90,7 +90,7 @@ export default function GuidanceCards({ state, offline, onConfirm, onAsk }) {
         <div className="gc-dots">
           {cards.map((c, k) => <span key={c.key} className={k === idx ? "on" : ""} onClick={() => setI(k)} />)}
         </div>
-        {g.needs_tap && <button className="gc-confirm" onClick={onConfirm}>I'm moving</button>}
+        {g.needs_tap && <button className="gc-confirm" onClick={onConfirm}>I'm on my way</button>}
       </div>
     </div>
   );

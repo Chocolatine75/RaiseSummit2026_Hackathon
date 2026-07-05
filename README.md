@@ -56,6 +56,29 @@ staged web ─Scout→  ┘   (Interactions API,   Object     └→ feed UI + o
 
 ## Run the demo
 
+### Windows quickstart (no API key, no deploy)
+
+The Keeper ships deterministic guidance, so the whole story runs with **zero keys**:
+
+```powershell
+npm --prefix keeper install    # once
+npm --prefix app install       # once
+./demo.ps1                      # boots Keeper + app in two windows, opens the browser
+./demo.ps1 -Beats               # ...and also fires the scripted story once
+```
+
+Then drive the beats any time (cross-platform, no bash/curl needed):
+
+```bash
+node scripts/fake-events.mjs            # quake → PA translate → sign → scout delta → route
+```
+
+…or use the control bar under the phone: **Arrive in Tokyo → Trigger quake → Cut the
+network → Reset**. Cutting the network flips the whole UI to the amber on-device mode
+while it keeps guiding from the cached situation — the signature moment.
+
+### Full rehearsal harness (bash)
+
 ```bash
 # Terminal 1 — nothing! The keeper is serverless; it's already running.
 

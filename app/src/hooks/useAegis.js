@@ -79,8 +79,8 @@ export function useAegis() {
     try {
       const cache = await caches.open("aegis-tiles");
       const jobs = [];
-      // Cache the same CartoDB dark tiles the map renders (subdomain 'a').
-      const TILE = "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png";
+      // Cache the same CartoDB Positron tiles the map renders (subdomain 'a').
+      const TILE = "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png";
       for (const z of [14, 15, 16, 17]) {
         const c = ll2tile(loc.lat, loc.lng, z), r = z >= 16 ? 3 : 2;
         for (let x = c.x - r; x <= c.x + r; x++) for (let y = c.y - r; y <= c.y + r; y++)

@@ -20,6 +20,8 @@ const P = {
   play: <path d="M7 4v16l13-8L7 4Z"/>,
   reset: <><path d="M4 12a8 8 0 1 0 2.3-5.6"/><path d="M4 4v4h4"/></>,
   bolt: <path d="M13 3 4 14h6l-1 7 9-11h-6l1-7Z"/>,
+  arrow: <path d="M5 12h14M12 5l7 7-7 7"/>,
+  chevron: <path d="M9 6l6 6-6 6"/>,
 };
 
 export default function Icon({ name, size = 22, stroke = 1.6, fill = "none", className = "" }) {
