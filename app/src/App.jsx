@@ -56,8 +56,8 @@ export default function App() {
     if (quake && !wasQuakeRef.current) { setShowAlert(true); setSheet("full"); setCard(0); }
     wasQuakeRef.current = quake;
   }, [quake]);
-  // cinematic handoff on offline edge
-  useEffect(() => { if (offline && !wasOffRef.current) { setHandoff(true); setSheet("full"); } wasOffRef.current = offline; }, [offline]);
+  // cinematic handoff on offline edge — also warm the on-device Gemma so voice works offline
+  useEffect(() => { if (offline && !wasOffRef.current) { setHandoff(true); setSheet("full"); initGemma(); } wasOffRef.current = offline; }, [offline]);
 
   // Initialize and compile Gemma 4 in the browser (Small Gemma on-device)
   const initGemma = async () => {
@@ -267,32 +267,8 @@ export default function App() {
   const brandTxt = offline ? "On-device" : quake ? "Emergency" : "Monitoring";
 
   return (
-    <div className="container-split">
-      {/* ══ BACKEND SIDE: the engine room ══ */}
-      <div className="engine-pane">
-        <EngineRoom state={state} offline={offline} />
-
-        {/* narrator control bar — drives the pitch beats */}
-        <div className="pitch-bar">
-          <div className="pb-group">
-            <button className="pb-btn" onClick={() => handleWarp("Shinjuku")}><Icon name="pin" size={14} /> Arrive in Tokyo</button>
-            <button className="pb-btn primary" onClick={() => emit("quake", { magnitude: "5+" })}><Icon name="warning" size={14} /> Trigger quake</button>
-            {!offline
-              ? <button className="pb-btn" onClick={forceOffline}><Icon name="wifiOff" size={14} /> Cut the network</button>
-              : <button className="pb-btn" onClick={goOnline}><Icon name="bolt" size={14} /> Restore network</button>}
-            <button className="pb-btn ghost" onClick={() => fetch(`/api/reset?session=${session}`, { method: "POST" })}><Icon name="reset" size={14} /> Reset</button>
-          </div>
-          <div className="pb-model">
-            <span className={`pb-model-dot ${gemmaStatus}`} />
-            Gemma 4 · {gemmaStatus === "ready" ? "loaded" : gemmaStatus === "loading" ? `warming up (${gemmaProgress}%)` : "dormant"}
-            {gemmaStatus === "dormant" && <button className="pb-warm" onClick={initGemma}>warm up</button>}
-          </div>
-        </div>
-      </div>
-
-      {/* ══ FRONTEND SIDE: the phone frame ══ */}
-      <div className="stage">
-        <div className={`phone ${offline ? "offline" : ""}`}><div className="notch" />
+    <div className="stage">
+      <div className={`phone ${offline ? "offline" : ""}`}><div className="notch" />
           <div className="screen">
             <div className="statusbar">
               <span>{time}</span>
@@ -395,7 +371,6 @@ export default function App() {
             {sos && <SosOverlay consent={consent} onResolve={() => setSos(false)} />}
           </div>
         </div>
-      </div>
     </div>
   );
 }
