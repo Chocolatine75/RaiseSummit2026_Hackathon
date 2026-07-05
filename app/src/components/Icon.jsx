@@ -37,6 +37,7 @@ const P = {
   battery: <><rect x="2" y="8" width="18" height="9" rx="2"/><path d="M22 11v3"/></>,
   arrowUp: <path d="M12 20V5M6 11l6-6 6 6"/>,
   loader: <><path d="M12 3v4M12 17v4M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/></>,
+  volume: <><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></>,
 };
 
 export default function Icon({ name, size = 22, stroke = 1.75, className = "", style }) {

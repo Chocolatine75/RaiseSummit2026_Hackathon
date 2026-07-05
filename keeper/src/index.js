@@ -24,7 +24,7 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (["/ws", "/event", "/api/eyes", "/api/reset", "/api/state", "/api/health", "/api/speak"].includes(url.pathname)) {
+    if (["/ws", "/event", "/api/eyes", "/api/reset", "/api/state", "/api/health", "/api/speak", "/api/live-translate"].includes(url.pathname)) {
       const session = url.searchParams.get("session") || "demo";
       const stub = env.SESSION_DO.get(env.SESSION_DO.idFromName(session));
       return stub.fetch(request);
@@ -128,6 +128,24 @@ export class SessionDO {
         } catch (e) {
           console.error("Speak API failed:", e);
           return new Response("speaking failed: " + e.message, { status: 500 });
+        }
+      }
+      case "/api/live-translate": {
+        // REAL Gemini Live API (gemini-3.5-live-translate-preview): takes a
+        // Japanese PA line, synthesizes it as speech, and streams that audio
+        // through the Live translation model to get spoken ENGLISH back. This
+        // is the model's true purpose — audio-in → translated-audio-out — used
+        // server-side over a WebSocket (no key ever touches the browser).
+        const ja = url.searchParams.get("ja");
+        if (!ja) return new Response("missing ja", { status: 400 });
+        try {
+          const key = this.env.GEMINI_API_KEY;
+          if (!key) throw new Error("GEMINI_API_KEY not configured");
+          const wav = await liveTranslateJaToEnAudio(ja, key);
+          return new Response(wav, { headers: { "Content-Type": "audio/wav", "Cache-Control": "public, max-age=3600" } });
+        } catch (e) {
+          console.error("Live translate failed:", e);
+          return new Response("live-translate failed: " + e.message, { status: 500 });
         }
       }
       case "/api/health": {
@@ -1139,6 +1157,109 @@ function pcmToWav(pcm, sampleRate = 24000) {
   w(36, "data"); v.setUint32(40, pcm.length, true);
   new Uint8Array(buf, 44).set(pcm);
   return buf;
+}
+
+// ---------- Gemini Live API: Japanese speech → English speech ----------
+// Real use of gemini-3.5-live-translate-preview, server-side over a WebSocket
+// (audio-in → translated-audio-out). Verified live: 24kHz JA PCM in, EN PCM out.
+function downsamplePcm16(pcm, fromRate, toRate) {
+  const src = new Int16Array(pcm.buffer, pcm.byteOffset, Math.floor(pcm.byteLength / 2));
+  const ratio = toRate / fromRate, outLen = Math.floor(src.length * ratio);
+  const out = new Int16Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const s = i / ratio, a = Math.floor(s), f = s - a;
+    out[i] = (src[a] || 0) * (1 - f) + (src[a + 1] || 0) * f;
+  }
+  return new Uint8Array(out.buffer);
+}
+
+function u8ToBase64(u8) {
+  let bin = "";
+  for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+  return btoa(bin);
+}
+
+async function liveTranslateJaToEnAudio(jaText, key) {
+  // 1) Synthesize the Japanese line as speech (24kHz L16 PCM).
+  const ttsRes = await fetch(`${GEMINI_BASE}/models/gemini-3.1-flash-tts-preview:generateContent?key=${key}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: jaText }] }],
+      generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } } } },
+    }),
+  });
+  if (!ttsRes.ok) throw new Error(`tts ${ttsRes.status}`);
+  const ttsData = await ttsRes.json();
+  const jaPart = ttsData.candidates?.[0]?.content?.parts?.find((p) => p.inlineData);
+  if (!jaPart?.inlineData?.data) throw new Error("no source audio");
+  const jaPcm24 = base64ToUint8Array(jaPart.inlineData.data);
+  const jaPcm16 = downsamplePcm16(jaPcm24, 24000, 16000); // Live API wants 16kHz in
+  const audioB64 = u8ToBase64(jaPcm16);
+
+  // 2) Stream that audio through the Live translate model; collect English PCM.
+  // Cloudflare Workers open OUTBOUND WebSockets via fetch() with an Upgrade
+  // header (the global `new WebSocket()` is inbound-only here).
+  const url = `https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${key}`;
+  const upgrade = await fetch(url, { headers: { Upgrade: "websocket" } });
+  const ws = upgrade.webSocket;
+  if (!ws) throw new Error(`live upgrade failed ${upgrade.status}`);
+  ws.accept();
+  const chunks = [];
+  return await new Promise((resolve, reject) => {
+    let setup = false, doneFlag = false, idle = null;
+    const hardTimer = setTimeout(() => finish(), 18000); // absolute safety cap
+    const finish = () => {
+      if (doneFlag) return; doneFlag = true;
+      clearTimeout(hardTimer); if (idle) clearTimeout(idle);
+      try { ws.close(); } catch {}
+      if (!chunks.length) return reject(new Error("no translated audio"));
+      const total = chunks.reduce((n, c) => n + c.length, 0);
+      const merged = new Uint8Array(total);
+      let off = 0; for (const c of chunks) { merged.set(c, off); off += c.length; }
+      resolve(pcmToWav(merged, 24000)); // Live API returns 24kHz audio out
+    };
+    // The translate model streams a fixed ~16s buffer: real speech first, then
+    // silence padding. Detect the padding (consecutive near-silent chunks after
+    // speech) and stop early — cutting ~16s of latency and trailing silence.
+    let heardSpeech = false, silentRun = 0;
+    const isSilent = (u8) => {
+      const s = new Int16Array(u8.buffer, u8.byteOffset, Math.floor(u8.byteLength / 2));
+      let peak = 0; for (let i = 0; i < s.length; i += 7) { const a = Math.abs(s[i]); if (a > peak) peak = a; }
+      return peak < 200;
+    };
+    const bumpIdle = () => { if (idle) clearTimeout(idle); idle = setTimeout(() => { if (chunks.length) finish(); }, 1200); };
+    // With fetch()-upgraded sockets in Workers the connection is already open
+    // after accept(); there is no "open" event, so send setup immediately.
+    try { ws.send(JSON.stringify({ setup: { model: "models/gemini-3.5-live-translate-preview", generationConfig: { responseModalities: ["AUDIO"] } } })); } catch {}
+    ws.addEventListener("message", async (ev) => {
+      let text;
+      try {
+        if (typeof ev.data === "string") text = ev.data;
+        else if (ev.data instanceof ArrayBuffer) text = new TextDecoder().decode(ev.data);
+        else if (ev.data && typeof ev.data.arrayBuffer === "function") text = new TextDecoder().decode(await ev.data.arrayBuffer());
+        else text = String(ev.data);
+      } catch { return; }
+      let m; try { m = JSON.parse(text); } catch { return; }
+      if (m.setupComplete) {
+        setup = true;
+        ws.send(JSON.stringify({ realtimeInput: { audio: { data: audioB64, mimeType: "audio/pcm;rate=16000" } } }));
+        setTimeout(() => { try { ws.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } })); } catch {} }, 200);
+        return;
+      }
+      for (const p of (m.serverContent?.modelTurn?.parts || [])) {
+        if (p.inlineData?.data) {
+          const u8 = base64ToUint8Array(p.inlineData.data);
+          const silent = isSilent(u8);
+          if (!silent) { heardSpeech = true; silentRun = 0; chunks.push(u8); bumpIdle(); }
+          else if (heardSpeech) { silentRun++; if (silentRun >= 2) return finish(); } // trailing silence → stop, drop the pad
+        }
+      }
+      if (m.serverContent?.turnComplete || m.serverContent?.generationComplete) finish();
+    });
+    ws.addEventListener("error", () => { if (!setup) { clearTimeout(timer); reject(new Error("live ws error")); } });
+    ws.addEventListener("close", () => { if (!setup) { clearTimeout(timer); reject(new Error("live ws closed early")); } });
+  });
 }
 
 // ---------- Real Coordinate-backed Fallback Shelters Database ----------

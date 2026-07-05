@@ -409,7 +409,7 @@ export default function App() {
                     )}
 
                     {/* live translate transcript (real PA translations + user/assistant turns) */}
-                    <Transcript state={state} offline={offline} thinking={thinking} />
+                    <Transcript state={state} offline={offline} thinking={thinking} session={session} />
 
                     {active && <button className="sos" onClick={startSos}><Icon name="warning" size={18} /> I need help now</button>}
 
@@ -547,15 +547,37 @@ function GuidanceCards({ g, r, best, hospital, offline, card, setCard, onConfirm
 }
 
 /* ── live translate transcript + on-device chat ── */
-function Transcript({ state, offline, thinking }) {
+function Transcript({ state, offline, thinking, session }) {
   const env = [...(state?.environment || [])].filter((e) => e.en).slice(-4);
+  const [playing, setPlaying] = useState(null);
+  const laRef = useRef(null);
   if (!env.length && !thinking) return null;
+  // Play the REAL Gemini Live API translation of a Japanese PA line (spoken
+  // Japanese → spoken English, done server-side).
+  const playLive = (ja, key) => {
+    if (!ja) return;
+    try { if (laRef.current) { laRef.current.pause(); } } catch {}
+    setPlaying(key);
+    const a = new Audio(`/api/live-translate?session=${session}&ja=${encodeURIComponent(ja)}`);
+    laRef.current = a;
+    a.onended = () => setPlaying(null);
+    a.onerror = () => setPlaying(null);
+    a.play().catch(() => setPlaying(null));
+  };
   return (
     <div className="transcript">
       {env.map((e, i) => (
         <div key={i} className={`turn ${e.src === "user" ? "me" : ""}`}>
           {e.ja && <div className="bubble ja">{e.ja}</div>}
-          <div className="bubble">{e.en}</div>
+          <div className="bubble">
+            {e.en}
+            {e.src === "PA" && e.ja && !offline && (
+              <button className="live-play" title="Hear it in English (Gemini Live)" onClick={() => playLive(e.ja, i)}>
+                <Icon name={playing === i ? "loader" : "volume"} size={13} />
+                {playing === i ? "Translating…" : "Hear it"}
+              </button>
+            )}
+          </div>
           <div className="bubble-label">{e.src === "PA" ? (offline ? "Gemma · offline" : "Live translate") : e.src === "user" ? "You" : offline ? "Gemma · on-device" : "AEGIS"}</div>
         </div>
       ))}
