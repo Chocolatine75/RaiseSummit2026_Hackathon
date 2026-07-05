@@ -253,6 +253,9 @@ export class SessionDO {
         const fast = fastAnswer(q, s);
         if (fast) {
           s.guidance = { ...s.guidance, current_instruction_en: fast, next_question: "Anything else?", needs_tap: false, confirmed: false };
+          // Also surface the answer as a chat bubble where the user is looking,
+          // so voice/text questions get a visible reply (not just a card swap).
+          s.environment.push({ src: "AEGIS", en: fast, t: new Date().toISOString() });
         }
         needsReasoning = true;
         break;
@@ -744,6 +747,11 @@ export class SessionDO {
         cur.guidance.next_question = g.next_question;
         cur.guidance.needs_tap = !!g.needs_tap;
         cur.guidance.confirmed = false;
+        // Refine the last AEGIS chat bubble in place with the LLM's better answer
+        // so the visible reply upgrades from the instant one (no orphan bubble).
+        for (let i = cur.environment.length - 1; i >= 0; i--) {
+          if (cur.environment[i].src === "AEGIS") { cur.environment[i].en = g.plain_line_en; break; }
+        }
         await this.state.storage.put("situation", cur);
         await this.broadcast();
 
