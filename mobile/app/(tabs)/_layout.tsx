@@ -1,9 +1,17 @@
 import { Tabs } from 'expo-router';
-import { Text } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { Colors, Fonts } from '@/constants/theme';
 
-function TabIcon({ emoji, focused }: { emoji: string; focused: boolean }) {
-  return <Text style={{ fontSize: 22, opacity: focused ? 1 : 0.4 }}>{emoji}</Text>;
+type FeatherName = React.ComponentProps<typeof Feather>['name'];
+
+function TabIcon({ name, focused }: { name: FeatherName; focused: boolean }) {
+  return (
+    <Feather
+      name={name}
+      size={16}
+      color={focused ? Colors.textPrimary : Colors.textMuted}
+    />
+  );
 }
 
 export default function TabsLayout() {
@@ -12,16 +20,17 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: '#0A0A0A',
-          borderTopColor: '#1E293B',
+          backgroundColor: Colors.background,
+          borderTopColor: 'rgba(255,255,255,0.06)',
           borderTopWidth: 1,
           height: 64,
-          paddingBottom: 8,
+          paddingBottom: 12,
+          paddingTop: 8,
         },
         tabBarLabelStyle: {
           fontFamily: Fonts.mono,
-          fontSize: Fonts.size.xs,
-          color: Colors.textMuted,
+          fontSize: 7,
+          letterSpacing: 1.0,
         },
         tabBarActiveTintColor: Colors.textPrimary,
         tabBarInactiveTintColor: Colors.textMuted,
@@ -30,22 +39,22 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Voix',
-          tabBarIcon: ({ focused }) => <TabIcon emoji="🎤" focused={focused} />,
+          title: 'VOICE',
+          tabBarIcon: ({ focused }) => <TabIcon name="mic" focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="map"
         options={{
-          title: 'Carte',
-          tabBarIcon: ({ focused }) => <TabIcon emoji="🗺️" focused={focused} />,
+          title: 'MAP',
+          tabBarIcon: ({ focused }) => <TabIcon name="map" focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="vault"
         options={{
-          title: 'Vault',
-          tabBarIcon: ({ focused }) => <TabIcon emoji="🔒" focused={focused} />,
+          title: 'VAULT',
+          tabBarIcon: ({ focused }) => <TabIcon name="lock" focused={focused} />,
         }}
       />
     </Tabs>
