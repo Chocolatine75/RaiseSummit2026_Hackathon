@@ -52,19 +52,60 @@ export function useAegis() {
 
   // Real GPS + automatic new-region detection.
   useEffect(() => {
-    if (!navigator.geolocation) return;
     let last = null;
-    const id = navigator.geolocation.watchPosition(
-      (pos) => {
-        const { latitude: lat, longitude: lng, accuracy } = pos.coords;
-        if (last && distM(last, { lat, lng }) < 15) return;
-        last = { lat, lng };
-        emit("set_location", { lat, lng, accuracy_m: Math.round(accuracy) });
-      },
-      () => {},
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
-    );
-    return () => navigator.geolocation.clearWatch(id);
+    let fallbackInterval = null;
+
+    const updateLocation = (lat, lng, accuracy) => {
+      if (last && distM(last, { lat, lng }) < 10) return;
+      last = { lat, lng };
+      emit("set_location", { lat, lng, accuracy_m: Math.round(accuracy) });
+    };
+
+    const startSimulatedTokyoGPS = () => {
+      const baseLat = 35.6896; // Shinjuku, Tokyo
+      const baseLng = 139.7006;
+      let driftStep = 0;
+      
+      const sendMock = () => {
+        const driftLat = Math.sin(driftStep * 0.2) * 0.00015;
+        const driftLng = Math.cos(driftStep * 0.2) * 0.00015;
+        driftStep++;
+        
+        updateLocation(baseLat + driftLat, baseLng + driftLng, 8 + Math.floor(Math.random() * 4));
+      };
+
+      sendMock();
+      fallbackInterval = setInterval(sendMock, 4000);
+    };
+
+    if (navigator.geolocation) {
+      const geoId = navigator.geolocation.watchPosition(
+        (pos) => {
+          const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+          const inJapan = lat > 30 && lat < 46 && lng > 128 && lng < 148;
+          if (!inJapan) {
+            if (!fallbackInterval) startSimulatedTokyoGPS();
+          } else {
+            updateLocation(lat, lng, accuracy);
+          }
+        },
+        (err) => {
+          console.warn("Geolocation watch failed:", err);
+          if (!fallbackInterval) startSimulatedTokyoGPS();
+        },
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 8000 }
+      );
+
+      return () => {
+        navigator.geolocation.clearWatch(geoId);
+        if (fallbackInterval) clearInterval(fallbackInterval);
+      };
+    } else {
+      startSimulatedTokyoGPS();
+      return () => {
+        if (fallbackInterval) clearInterval(fallbackInterval);
+      };
+    }
   }, [emit]);
 
   // Region prep: cache map tiles for offline (a designed moment). Re-runs when
@@ -79,8 +120,8 @@ export function useAegis() {
     try {
       const cache = await caches.open("aegis-tiles");
       const jobs = [];
-      // Cache the same CartoDB dark tiles the map renders (subdomain 'a').
-      const TILE = "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png";
+      // Cache the same Esri English street tiles the map renders.
+      const TILE = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
       for (const z of [14, 15, 16, 17]) {
         const c = ll2tile(loc.lat, loc.lng, z), r = z >= 16 ? 3 : 2;
         for (let x = c.x - r; x <= c.x + r; x++) for (let y = c.y - r; y <= c.y + r; y++)
@@ -104,7 +145,19 @@ export function useAegis() {
     // re-establish it now so aftershocks and confirmations flow again.
     if (!wsRef.current || wsRef.current.readyState > 1) connectRef.current?.();
   }, []);
-  return { state, offline, emit, regionPrep, session: SESSION, forceOffline, goOnline };
+
+  // Offline turn: apply an on-device (Gemma) update to the mirrored Situation
+  // Object through React state, so the UI actually re-renders. `patch` receives
+  // the current state and returns the next one (pure, immutable).
+  const ingestOffline = useCallback((patch) => {
+    setState((prev) => {
+      const next = patch(prev || {});
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  return { state, offline, emit, regionPrep, session: SESSION, forceOffline, goOnline, ingestOffline };
 }
 
 // geo helpers

@@ -35,6 +35,8 @@ const P = {
   users: <><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 6a3 3 0 0 1 0 6M21 20a6 6 0 0 0-4-5.6"/></>,
   utensils: <><path d="M6 3v7a2 2 0 0 0 4 0V3M8 10v11M18 3c-1.5 0-2.5 2-2.5 5s1 4 2.5 4v9"/></>,
   battery: <><rect x="2" y="8" width="18" height="9" rx="2"/><path d="M22 11v3"/></>,
+  arrowUp: <path d="M12 20V5M6 11l6-6 6 6"/>,
+  loader: <><path d="M12 3v4M12 17v4M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/></>,
 };
 
 export default function Icon({ name, size = 22, stroke = 1.75, className = "", style }) {

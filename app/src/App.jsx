@@ -12,7 +12,7 @@ const LANGS = [
 ];
 
 export default function App() {
-  const { state, offline, emit, session, forceOffline, goOnline } = useAegis();
+  const { state, offline, emit, session, forceOffline, goOnline, regionPrep, ingestOffline } = useAegis();
   const [onboarded, setOnboarded] = useState(() => localStorage.getItem("aegis_onboarded") === "1");
   const [lang, setLang] = useState(() => localStorage.getItem("aegis_lang") || "en");
   const [consent, setConsent] = useState(() => {
@@ -95,52 +95,33 @@ export default function App() {
     }
   };
 
+  const [thinking, setThinking] = useState(false);
   const handleUserUtterance = async (t) => {
+    t = (t || "").trim();
     if (!t) return;
-    
-    if (offline) {
-      if (gemmaStatus !== "ready") {
-        alert("Local Gemma 4 model is not ready! Please click 'warm up' on the bottom right first.");
-        return;
-      }
-      // Add user query locally to environment array to display in feed
-      const fakeTime = new Date().toISOString();
-      if (state) {
-        state.environment = state.environment || [];
-        state.environment.push({ src: "user", en: t, t: fakeTime });
-      }
-
-      // Prompt template specifically crafted for the E2B-it edge model
-      const prompt = `You are AEGIS, an offline on-device emergency assistant. Guide the user safely based on current situation data.\n` +
-        `Situation: ${JSON.stringify(state)}\n\n` +
-        `User query: "${t}"\n\n` +
-        `Reply with ONE concise, actionable emergency step. Keep it under 25 words. Do not invent exits.`;
-      
-      try {
-        const response = await gemmaInferenceRef.current.generateResponse(prompt);
-        if (state) {
-          const updated = { ...state };
-          updated.guidance = {
-            ...updated.guidance,
-            current_instruction_en: response,
-            next_question: "Are you safe and following the offline guide?",
-            needs_tap: false,
-            confirmed: false,
-            action: "OFFLINE GUIDE",
-            headline: "Gemma Edge Active"
-          };
-          updated.timing = { last_reason_ms: 65 }; // local edge performance!
-          localStorage.setItem(`aegis_state_${session}`, JSON.stringify(updated));
-          // Emit a mock event to trigger a reactive state-sync
-          emit("user_utterance", { text: t, dummy: true });
-        }
-      } catch (err) {
-        console.error("Local generation failed:", err);
-      }
-    } else {
-      emit("user_utterance", { text: t });
-    }
     setSheet("full");
+
+    // ONLINE → real backend (Gemini reasons, guidance flows back over WS).
+    if (!offline) { emit("user_utterance", { text: t }); return; }
+
+    // OFFLINE → on-device Gemma answers in chat. Show the user's turn instantly,
+    // then stream in Gemma's reply. All through setState so the UI re-renders.
+    ingestOffline((s) => ({ ...s, environment: [...(s.environment || []), { src: "user", en: t, t: new Date().toISOString() }] }));
+
+    if (gemmaStatus !== "ready") { initGemma(); }
+    setThinking(true);
+    const situationBrief = summarizeSituation(state);
+    const prompt = `You are AEGIS, an offline on-device emergency assistant in Tokyo. Use only the situation facts below.\n` +
+      `Situation: ${situationBrief}\n\nUser: "${t}"\n\n` +
+      `Reply with ONE concise, actionable step (under 25 words). Do not invent exits or places.`;
+    let answer = "";
+    try {
+      if (gemmaInferenceRef.current) answer = await gemmaInferenceRef.current.generateResponse(prompt);
+    } catch (err) { console.error("On-device generation failed:", err); }
+    if (!answer) answer = offlineFallbackAnswer(t, state); // deterministic guidance if model unavailable
+    setThinking(false);
+    ingestOffline((s) => ({ ...s, environment: [...(s.environment || []), { src: "AEGIS", en: answer, t: new Date().toISOString() }] }));
+    speak(answer);
   };
 
   // ── real-time VOICE: press mic → listen → speak the answer (no chatbot enter) ──
@@ -168,6 +149,9 @@ export default function App() {
     rec.onerror = () => setListening(false);
     rec.onresult = (e) => { const t = e.results[0]?.[0]?.transcript; if (t) { handleUserUtterance(t); } };
     recRef.current = rec;
+    return () => {
+      try { rec.stop(); } catch {}
+    };
   }, [emit, lang, offline, gemmaStatus]);
 
   const toggleMic = () => { const rec = recRef.current; if (!rec) return; if (listening) rec.stop(); else { try { rec.start(); } catch {} } };
@@ -286,6 +270,14 @@ export default function App() {
                 {showAlert && <QuakeAlert state={state} onOpen={() => setShowAlert(false)} />}
                 {handoff && <OfflineHandoff state={state} onDone={() => setHandoff(false)} />}
 
+                {/* ambient: map tiles caching for offline (real, from the hook) */}
+                {regionPrep && !handoff && (
+                  <div className={`prep-toast ${regionPrep.done ? "done" : ""}`}>
+                    <Icon name={regionPrep.done ? "checkCircle" : "download"} size={17} />
+                    <div><div className="prep-title">{regionPrep.title}</div><div className="prep-sub">{regionPrep.sub}</div></div>
+                  </div>
+                )}
+
                 {/* top bar over the map */}
                 {!handoff && (
                   <div className="topbar">
@@ -336,19 +328,37 @@ export default function App() {
                       <GuidanceCards g={g} r={r} best={best} hospital={hospital} offline={offline} card={card} setCard={setCard} onConfirm={() => emit("user_tap")} />
                     )}
 
-                    {/* live translate transcript (real PA translations + user turns) */}
-                    <Transcript state={state} offline={offline} />
+                    {/* live translate transcript (real PA translations + user/assistant turns) */}
+                    <Transcript state={state} offline={offline} thinking={thinking} />
 
                     {active && <button className="sos" onClick={startSos}><Icon name="warning" size={18} /> I need help now</button>}
 
-                    {/* mic control (real-time voice, not chatbot enter) */}
-                    <div className="orb-wrap" style={{ margin: "16px 0 2px" }}>
-                      <div className={`orb ${listening ? "listening on-red" : ""}`} style={{ width: 68, height: 68 }} onClick={toggleMic}>
-                        {listening && <span className="ring" />}
-                        <span className="core" style={{ width: 46, height: 46 }}><Icon name="mic" size={20} /></span>
+                    {/* Ask AEGIS — online: real-time voice · offline: on-device text chat */}
+                    {offline ? (
+                      <div className="composer">
+                        <input
+                          className="composer-input"
+                          type="text"
+                          placeholder={gemmaStatus === "ready" ? "Ask on-device — e.g. nearest shelter?" : "Ask on-device (Gemma warming up…)"}
+                          value={ask}
+                          onChange={(e) => setAsk(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter" && ask.trim()) { handleUserUtterance(ask); setAsk(""); } }}
+                        />
+                        <button className="composer-send" disabled={!ask.trim() || thinking} onClick={() => { if (ask.trim()) { handleUserUtterance(ask); setAsk(""); } }}>
+                          <Icon name={thinking ? "loader" : "arrowUp"} size={18} style={thinking ? { animation: "spin 1s linear infinite" } : undefined} />
+                        </button>
                       </div>
-                    </div>
-                    <div className="orb-label">{listening ? "Listening — speak now" : "Hold-free · tap to ask by voice"}</div>
+                    ) : (
+                      <>
+                        <div className="orb-wrap" style={{ margin: "16px 0 2px" }}>
+                          <div className={`orb ${listening ? "listening on-red" : ""}`} style={{ width: 68, height: 68 }} onClick={toggleMic}>
+                            {listening && <span className="ring" />}
+                            <span className="core" style={{ width: 46, height: 46 }}><Icon name="mic" size={20} /></span>
+                          </div>
+                        </div>
+                        <div className="orb-label">{listening ? "Listening — speak now" : "Tap to ask by voice"}</div>
+                      </>
+                    )}
 
                     {/* the pack: real agents working, tappable for their live trace */}
                     <PackAgents state={state} offline={offline} onOpen={setDrawer} />
@@ -394,6 +404,15 @@ function GuidanceCards({ g, r, best, hospital, offline, card, setCard, onConfirm
         {g.headline && <div className="headline">{g.headline}</div>}
         {expanded && g.current_instruction_en && <p className="detail-text">{g.current_instruction_en}</p>}
         {g.current_instruction_en && <button className="detail-btn" onClick={() => setExpanded((v) => !v)}>{expanded ? "Less" : "Why this?"} <Icon name="chevronD" size={14} /></button>}
+        {/* payoff visible immediately — no swipe needed. tap to open the full shelter card */}
+        {(r?.target || best?.name) && (
+          <button className="go-strip" onClick={() => setCard(cards.indexOf("shelter"))}>
+            <span className="go-ico"><Icon name="navigation" size={15} /></span>
+            <span className="go-body"><span className="go-label">GO HERE</span><span className="go-name">{r?.target || best?.name}</span></span>
+            {r && <span className="go-meta">{Math.max(1, Math.round(r.duration_s / 60))} min · {r.distance_m} m</span>}
+            <Icon name="chevronR" size={16} />
+          </button>
+        )}
       </>)}
       {k === "shelter" && (
         <div className="dest-card">
@@ -420,19 +439,20 @@ function GuidanceCards({ g, r, best, hospital, offline, card, setCard, onConfirm
   );
 }
 
-/* ── live translate transcript ── */
-function Transcript({ state, offline }) {
-  const env = [...(state?.environment || [])].filter((e) => e.en).slice(-3);
-  if (!env.length) return null;
+/* ── live translate transcript + on-device chat ── */
+function Transcript({ state, offline, thinking }) {
+  const env = [...(state?.environment || [])].filter((e) => e.en).slice(-4);
+  if (!env.length && !thinking) return null;
   return (
     <div className="transcript">
       {env.map((e, i) => (
-        <div key={i}>
+        <div key={i} className={`turn ${e.src === "user" ? "me" : ""}`}>
           {e.ja && <div className="bubble ja">{e.ja}</div>}
           <div className="bubble">{e.en}</div>
-          <div className="bubble-label">{e.src === "PA" ? (offline ? "Gemma · offline" : "Live translate") : e.src === "user" ? "You" : "AEGIS"}</div>
+          <div className="bubble-label">{e.src === "PA" ? (offline ? "Gemma · offline" : "Live translate") : e.src === "user" ? "You" : offline ? "Gemma · on-device" : "AEGIS"}</div>
         </div>
       ))}
+      {thinking && <div className="turn"><div className="bubble typing"><span /><span /><span /></div><div className="bubble-label">Gemma · on-device</div></div>}
     </div>
   );
 }
@@ -530,6 +550,24 @@ function PrivacyTab({ consent, setConsent, lang, setLang, state, offline, onOffl
           ? <button className="btn primary" style={{ width: "100%" }} onClick={onOnline}><Icon name="wifi" size={15} /> Restore network</button>
           : <button className="btn ghost" style={{ width: "100%" }} onClick={onOffline}><Icon name="wifiOff" size={15} /> Simulate signal loss (tunnel)</button>}
       </div>
+      <div className="card">
+        <div className="row-name" style={{ marginBottom: 10 }}>Session Control</div>
+        <button className="btn ghost" style={{ width: "100%", color: "var(--red)", borderColor: "rgba(229,72,77,0.4)" }} onClick={async () => {
+          if (confirm("Reset current rehearsal and delete all live data/chat history?")) {
+            try {
+              const session = new URLSearchParams(window.location.search).get("session") || "demo";
+              const res = await fetch(`/api/reset?session=${session}`, { method: "POST" });
+              if (res.ok) {
+                localStorage.removeItem(`aegis_state_${session}`);
+                alert("Session reset complete! App will reload.");
+                window.location.reload();
+              }
+            } catch (err) {
+              alert("Failed to reset: " + err.message);
+            }
+          }
+        }}><Icon name="reset" size={15} /> Reset rehearsal / start fresh</button>
+      </div>
     </div>
   );
 }
@@ -556,3 +594,36 @@ function SosOverlay({ consent, onResolve }) {
 }
 
 function age(iso) { const s = Math.max(0, (Date.now() - new Date(iso)) / 1000); return s < 90 ? `${Math.round(s)}s` : `${Math.round(s / 60)}min`; }
+
+// Compact the situation to the few facts Gemma needs (keeps the on-device prompt small).
+function summarizeSituation(s) {
+  if (!s) return "No situation data.";
+  const sh = s.live_delta?.shelters?.[0];
+  const r = s.route;
+  return [
+    s.event?.type === "earthquake" ? "Active earthquake." : "Monitoring.",
+    s.user?.location?.station ? `User near ${s.user.location.station}.` : "",
+    sh ? `Nearest shelter: ${sh.name} (${sh.dist_m}m${sh.step_free ? ", step-free" : ""}).` : "",
+    r?.target ? `Route to ${r.target}: ${r.distance_m}m, ${Math.round((r.duration_s||0)/60)}min.` : "",
+    s.guidance?.current_instruction_en ? `Last guidance: ${s.guidance.current_instruction_en}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+// Deterministic offline guidance so the chat always answers even if the Gemma
+// model file isn't loaded — matches the situation state we already hold on-device.
+function offlineFallbackAnswer(q, s) {
+  const t = q.toLowerCase();
+  const sh = s?.live_delta?.shelters?.[0];
+  const r = s?.route;
+  const hosp = s?.live_delta?.hospitals?.[0];
+  if (/shelter|evacuat|where.*go|safe place/.test(t) && (r?.target || sh))
+    return `Head to ${r?.target || sh.name}${r ? ` — ${r.distance_m}m, about ${Math.round((r.duration_s||0)/60)} min on foot` : ""}. Follow the marked route.`;
+  if (/hospital|hurt|injur|medical|bleed/.test(t) && hosp)
+    return `Nearest medical is ${hosp.name}, ${hosp.dist_m}m away. If serious, call 119.`;
+  if (/elevator|lift/.test(t)) return "Do not use elevators after a quake — they may stop. Use stairs.";
+  if (/fire|smoke|burn/.test(t)) return "Stay low under smoke, cover your nose, and move to the nearest exit. Call 119.";
+  if (/water|drink|thirst/.test(t)) return "Ration water. Your survival vault lists the nearest supply point on the offline map.";
+  return sh
+    ? `Stay calm. Nearest safe point is ${sh.name}, ${sh.dist_m}m away. Protect your head and avoid glass and edges.`
+    : "Stay calm, protect your head, and move away from windows and heavy objects until shaking stops.";
+}

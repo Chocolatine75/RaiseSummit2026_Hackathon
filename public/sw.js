@@ -24,6 +24,7 @@ self.addEventListener("fetch", (e) => {
   const isHeavy = url.pathname.startsWith("/models/") ||
     url.hostname === "cdn.jsdelivr.net" ||
     url.hostname.endsWith("basemaps.cartocdn.com") ||
+    url.hostname === "server.arcgisonline.com" ||
     url.hostname === "tile.openstreetmap.org";
 
   if (url.origin === location.origin && !isHeavy) {

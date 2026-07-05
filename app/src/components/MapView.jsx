@@ -8,6 +8,7 @@ export default function MapView({ state, active, offline }) {
   const mapRef = useRef(null);
   const layersRef = useRef({});
   const loc = state?.user?.location;
+  const hasCenteredRef = useRef(false);
 
   useEffect(() => {
     if (mapRef.current) return;
@@ -15,7 +16,7 @@ export default function MapView({ state, active, offline }) {
     if (!el) return;
     const center = [loc?.lat ?? 35.6595, loc?.lng ?? 139.7005];
     const map = L.map("map", { zoomControl: false, attributionControl: false }).setView(center, 15);
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", { subdomains: "abcd", maxZoom: 20 }).addTo(map);
+    L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", { maxZoom: 20 }).addTo(map);
     layersRef.current.user = L.marker(center, { icon: L.divIcon({ className: "gps-dot", html: '<div class="gps-core"></div>', iconSize: [22, 22] }) }).addTo(map);
     layersRef.current.shelters = L.layerGroup().addTo(map);
     layersRef.current.hospitals = L.layerGroup().addTo(map);
@@ -23,7 +24,13 @@ export default function MapView({ state, active, offline }) {
 
     const recenter = () => { const c = layersRef.current.user?.getLatLng(); if (c) map.setView(c, 16, { animate: true }); };
     window.addEventListener("aegis-recenter", recenter);
-    return () => window.removeEventListener("aegis-recenter", recenter);
+    return () => {
+      window.removeEventListener("aegis-recenter", recenter);
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
   }, []);
 
   useEffect(() => { if (active && mapRef.current) setTimeout(() => mapRef.current.invalidateSize(), 90); }, [active]);
@@ -32,6 +39,11 @@ export default function MapView({ state, active, offline }) {
     const map = mapRef.current; if (!map || !state) return;
     const st = { lat: loc?.lat ?? 35.6595, lng: loc?.lng ?? 139.7005 };
     layersRef.current.user.setLatLng([st.lat, st.lng]);
+
+    if (!hasCenteredRef.current && loc?.lat) {
+      map.setView([st.lat, st.lng], 15);
+      hasCenteredRef.current = true;
+    }
 
     const sl = layersRef.current.shelters; sl.clearLayers();
     (state.live_delta?.shelters || []).forEach((sh, i) => {

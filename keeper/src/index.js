@@ -245,19 +245,41 @@ export class SessionDO {
       case "set_location": { // from the phone's real GPS: { lat, lng, accuracy_m, place }
         const p = event.payload || {};
         if (p.lat != null && p.lng != null) {
-          // Reverse-geocode to a REAL place name (free OSM Nominatim, no key).
-          const place = p.place || await this.reverseGeocode(p.lat, p.lng).catch(() => null);
+          // Persist the coordinates IMMEDIATELY (source flips to device_gps now) so
+          // the phone re-centers with no lag. The place name (reverse-geocode) and
+          // hospitals (Maps grounding) are slow network/LLM calls — run them in the
+          // background and broadcast when each lands, rather than blocking the ping.
           s.user.location = {
             ...s.user.location,
             lat: p.lat, lng: p.lng,
             accuracy_m: p.accuracy_m ?? null,
             source: "device_gps",
-            ...(place ? { station: place } : {}),
+            ...(p.place ? { station: p.place } : {}),
           };
+
+          if (!p.place) {
+            this.reverseGeocode(p.lat, p.lng).then(async (place) => {
+              if (!place) return;
+              const cur = await this.situation();
+              cur.user.location = { ...cur.user.location, station: place };
+              await this.state.storage.put("situation", cur);
+              await this.broadcast();
+            }).catch(() => {});
+          }
+
+          this.realHospitals(s).then(async (hospitals) => {
+            if (!hospitals?.length) return;
+            const cur = await this.situation();
+            cur.live_delta.hospitals = hospitals;
+            await this.state.storage.put("situation", cur);
+            await this.broadcast();
+          }).catch(() => {});
+
           if (s.event?.type === "earthquake") {
             const shelters = await this.realShelters(s).catch(() => null);
             if (shelters?.length) { s.live_delta.shelters = scoreShelters(shelters, s); s.live_delta.as_of = t; }
           } else {
+            const place = p.place;
             // CITY ENTRY (no active emergency): pre-stage the region so that when
             // disaster strikes, guidance is instant. Ground real shelters now,
             // cache them, and log it to the engine room so judges see the
@@ -300,10 +322,11 @@ export class SessionDO {
     let reasonPromise = null;
     if (needsReasoning) {
       const t0 = Date.now();
-      const doReason = this.reason(s).then(() => {
-        s.timing = { last_reason_ms: Date.now() - t0 };
-        runAudit(s, { requireStateChain: !!this.env.GEMINI_API_KEY });
-        return this.state.storage.put("situation", s);
+      const doReason = this.reason(s).then(async () => {
+        const cur = await this.situation();
+        cur.timing = { last_reason_ms: Date.now() - t0 };
+        runAudit(cur, { requireStateChain: !!this.env.GEMINI_API_KEY });
+        return this.state.storage.put("situation", cur);
       });
       if (event.type === "quake") { reasonPromise = doReason; } // let it run alongside grounding
       else { await doReason; }
@@ -368,12 +391,28 @@ export class SessionDO {
       if (route) {
         await this.logAgent("Router", "done", `${route.distance_m}m · ${Math.round(route.duration_s / 60)}min via ${route.first_step || "route"}`);
         s2.route = route;
-        await this.reason(s2); // re-guide with the REAL walking distance
+
+        // Instant deterministic fast-path feedback:
+        s2.guidance.action = "EVACUATE NOW";
+        s2.guidance.headline = `Move step-free to ${route.target}`;
+        s2.guidance.current_instruction_en = `Follow the step-free path. Avoid stairs. ${route.target} is open, step-free, and ${route.distance_m} meters away.`;
+        s2.guidance.next_question = "Is the path clear where you are?";
+        s2.guidance.needs_tap = true;
+        s2.guidance.confirmed = false;
+
         runAudit(s2, { requireStateChain: !!this.env.GEMINI_API_KEY });
         await this.state.storage.put("situation", s2);
         await this.broadcast();
         await this.logAgent("QA", s2.audit.status === "pass" ? "done" : "warn",
           s2.audit.status === "pass" ? "All safety invariants passed" : "Review flagged an issue");
+
+        // Refine with LLM in the background:
+        this.reason(s2).then(async () => {
+          const cur = await this.situation();
+          runAudit(cur, { requireStateChain: !!this.env.GEMINI_API_KEY });
+          await this.state.storage.put("situation", cur);
+          await this.broadcast();
+        }).catch(() => {});
       }
     }
     return json({ ok: true });
@@ -456,7 +495,7 @@ export class SessionDO {
   // ---------- Reverse geocode: real place name from coordinates (OSM, no key) ----------
   async reverseGeocode(lat, lng) {
     const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=14`;
-    const res = await fetch(url, { headers: { "User-Agent": "AEGIS-emergency-nav/1.0" } });
+    const res = await fetchWithTimeout(url, { headers: { "User-Agent": "AEGIS-emergency-nav/1.0" } }, 5000);
     if (!res.ok) return null;
     const d = await res.json();
     const a = d.address || {};
@@ -478,7 +517,7 @@ export class SessionDO {
 
     const url = `https://router.project-osrm.org/route/v1/foot/${lng},${lat};${target.lng},${target.lat}` +
       `?overview=full&geometries=geojson&steps=true`;
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url, {}, 5000);
     if (!res.ok) throw new Error(`osrm ${res.status}`);
     const data = await res.json();
     const r = data.routes?.[0];
@@ -634,13 +673,24 @@ export class SessionDO {
       // when it refines, the instruction updates a few seconds later. This halves
       // the PERCEIVED latency without dropping the safety check.
       if (g.surface_now) {
-        s.guidance.action = g.action || null;
-        s.guidance.headline = g.headline || null;
-        s.guidance.current_instruction_en = g.plain_line_en;
-        s.guidance.next_question = g.next_question;
-        s.guidance.needs_tap = !!g.needs_tap;
-        s.guidance.confirmed = false;
-        await this.state.storage.put("situation", s);
+        const cur = await this.situation();
+        if (data.id) cur.interaction_chain_id = data.id;
+
+        if (cur.route && g.plain_line_en) {
+          const hasTarget = g.plain_line_en.toLowerCase().includes(cur.route.target.toLowerCase());
+          const hasDist = g.plain_line_en.includes(String(cur.route.distance_m));
+          if (!hasTarget || !hasDist) {
+            g.plain_line_en += ` Proceed to ${cur.route.target} which is ${cur.route.distance_m} meters away.`;
+          }
+        }
+
+        cur.guidance.action = g.action || null;
+        cur.guidance.headline = g.headline || null;
+        cur.guidance.current_instruction_en = g.plain_line_en;
+        cur.guidance.next_question = g.next_question;
+        cur.guidance.needs_tap = !!g.needs_tap;
+        cur.guidance.confirmed = false;
+        await this.state.storage.put("situation", cur);
         await this.broadcast();
       }
 
@@ -705,25 +755,38 @@ export class SessionDO {
         await this.logAgent("QA", "done", "Critic: Verified candidate. Constraint safety and accuracy check passed.");
       }
 
-      if (g && g.surface_now) {
-        s.guidance.action = g.action || null;
-        s.guidance.headline = g.headline || null;
-        s.guidance.current_instruction_en = g.plain_line_en;
-        s.guidance.next_question = g.next_question;
-        s.guidance.needs_tap = !!g.needs_tap;
-        s.guidance.confirmed = false;
+      const cur = await this.situation();
+      if (s.interaction_chain_id) cur.interaction_chain_id = s.interaction_chain_id;
+
+      if (g && g.plain_line_en && cur.route) {
+        const hasTarget = g.plain_line_en.toLowerCase().includes(cur.route.target.toLowerCase());
+        const hasDist = g.plain_line_en.includes(String(cur.route.distance_m));
+        if (!hasTarget || !hasDist) {
+          g.plain_line_en += ` Proceed to ${cur.route.target} which is ${cur.route.distance_m} meters away.`;
+        }
       }
+
+      if (g && (g.surface_now || cur.route)) {
+        cur.guidance.action = g.action || null;
+        cur.guidance.headline = g.headline || null;
+        cur.guidance.current_instruction_en = g.plain_line_en;
+        cur.guidance.next_question = g.next_question;
+        cur.guidance.needs_tap = !!g.needs_tap;
+        cur.guidance.confirmed = false;
+      }
+      await this.state.storage.put("situation", cur);
     } catch (err) {
       console.error("Multi-agent reasoning error:", err);
-      const fallback = deterministicGuidance(s);
-      s.guidance.action = fallback.action;
-      s.guidance.headline = fallback.headline;
-      s.guidance.current_instruction_en = fallback.current_instruction_en;
-      s.guidance.next_question = `${fallback.next_question} (reasoning offline: ${String(err).slice(0, 70)})`;
-      s.guidance.needs_tap = fallback.needs_tap;
-      s.guidance.confirmed = false;
+      const cur = await this.situation();
+      const fallback = deterministicGuidance(cur);
+      cur.guidance.action = fallback.action;
+      cur.guidance.headline = fallback.headline;
+      cur.guidance.current_instruction_en = fallback.current_instruction_en;
+      cur.guidance.next_question = `${fallback.next_question} (reasoning offline: ${String(err).slice(0, 70)})`;
+      cur.guidance.needs_tap = fallback.needs_tap;
+      cur.guidance.confirmed = false;
+      await this.state.storage.put("situation", cur);
     }
-    await this.state.storage.put("situation", s);
   }
 
   // ---------- Eyes: camera photo → Gemini vision → sign_read event ----------
@@ -856,6 +919,19 @@ function runAudit(s, { requireStateChain = true } = {}) {
 }
 
 // ---------- Helpers ----------
+async function fetchWithTimeout(url, options = {}, timeoutMs = 5000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return response;
+  } catch (error) {
+    clearTimeout(id);
+    throw error;
+  }
+}
+
 function shortId(id) { return id ? `${String(id).slice(0, 10)}…` : ""; }
 
 function json(obj, status = 200) {
