@@ -1,0 +1,102 @@
+import { useEffect, useRef, useState, useCallback } from "react";
+
+// Single source of truth for the whole app: connects to the Keeper over
+// WebSocket, mirrors the Situation Object, drives real GPS + region entry,
+// caches state for the offline handoff, and exposes emit().
+const SESSION = new URLSearchParams(location.search).get("session") || "demo";
+const CACHE_KEY = `aegis_state_${SESSION}`;
+
+export function useAegis() {
+  const [state, setState] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(CACHE_KEY)) || null; } catch { return null; }
+  });
+  const [offline, setOffline] = useState(false);
+  const wsRef = useRef(null);
+  const packedRef = useRef(false);
+  const [regionPrep, setRegionPrep] = useState(null); // {title, sub, done}
+
+  const emit = useCallback((type, payload = {}) => {
+    const ev = { type, payload, src: "client", t: new Date().toISOString() };
+    const ws = wsRef.current;
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify(ev));
+    else fetch(`/event?session=${SESSION}`, { method: "POST", body: JSON.stringify(ev) }).catch(() => {});
+  }, []);
+
+  // WebSocket connection with auto-reconnect.
+  useEffect(() => {
+    let alive = true;
+    const connect = () => {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      const ws = new WebSocket(`${proto}://${location.host}/ws?session=${SESSION}`);
+      wsRef.current = ws;
+      ws.onmessage = (m) => {
+        const s = JSON.parse(m.data);
+        s.network = { ...s.network, last_serialized_to_device: new Date().toISOString() };
+        localStorage.setItem(CACHE_KEY, JSON.stringify(s));
+        setState(s);
+        setOffline(false);
+        if (!packedRef.current && s?.user?.location?.lat) prepareRegion(s.user.location);
+      };
+      ws.onclose = () => { setOffline(true); if (alive) setTimeout(connect, 3000); };
+      ws.onerror = () => ws.close();
+    };
+    connect();
+    return () => { alive = false; wsRef.current?.close(); };
+  }, []);
+
+  // Real GPS + automatic new-region detection.
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    let last = null;
+    const id = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+        if (last && distM(last, { lat, lng }) < 15) return;
+        last = { lat, lng };
+        emit("set_location", { lat, lng, accuracy_m: Math.round(accuracy) });
+      },
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+    );
+    return () => navigator.geolocation.clearWatch(id);
+  }, [emit]);
+
+  // Region prep: cache map tiles for offline (a designed moment).
+  async function prepareRegion(loc) {
+    packedRef.current = true;
+    const name = loc.station && loc.station !== "—" ? loc.station : "this area";
+    setRegionPrep({ title: `Preparing ${name} for offline`, sub: "Downloading map tiles…", done: false });
+    try {
+      const cache = await caches.open("aegis-tiles");
+      const jobs = [];
+      const TILE = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+      for (const z of [14, 15, 16, 17]) {
+        const c = ll2tile(loc.lat, loc.lng, z), r = z >= 16 ? 3 : 2;
+        for (let x = c.x - r; x <= c.x + r; x++) for (let y = c.y - r; y <= c.y + r; y++)
+          jobs.push(TILE.replace("{z}", z).replace("{x}", x).replace("{y}", y));
+      }
+      let done = 0;
+      await Promise.allSettled(jobs.map(async (u) => {
+        try { const res = await fetch(u, { mode: "cors" }); if (res.ok) await cache.put(u, res); } catch {}
+        setRegionPrep((p) => ({ ...p, sub: `Downloading map · ${++done}/${jobs.length} tiles` }));
+      }));
+      setRegionPrep({ title: `${name} ready for offline`, sub: `${done} tiles saved · assistant on standby`, done: true });
+      setTimeout(() => setRegionPrep(null), 2600);
+    } catch { setRegionPrep(null); }
+  }
+
+  const forceOffline = useCallback(() => { wsRef.current?.close(); setOffline(true); }, []);
+  return { state, offline, emit, regionPrep, session: SESSION, forceOffline };
+}
+
+// geo helpers
+export function distM(a, b) {
+  const R = 6371000, dLat = ((b.lat - a.lat) * Math.PI) / 180, dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+function ll2tile(lat, lng, z) {
+  const n = 2 ** z;
+  return { x: Math.floor(((lng + 180) / 360) * n),
+    y: Math.floor(((1 - Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) / Math.PI) / 2) * n) };
+}

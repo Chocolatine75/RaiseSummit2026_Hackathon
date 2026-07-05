@@ -243,6 +243,10 @@ export class SessionDO {
     if (event.type === "quake") {
       await this.logAgent("Keeper", "active", "Earthquake detected — orchestrating response agents");
 
+      // 0) Listener (Live Translate) — the station PA speaks Japanese; we
+      //    translate it into the user's language with a real Gemini call.
+      await this.runListener(s).catch((e) => this.logAgent("Listener", "error", String(e).slice(0, 120)));
+
       // 1) Scout (Antigravity) — real Google-hosted sandbox browsing the web.
       await this.runScout(s).catch((e) => this.logAgent("Scout", "error", String(e).slice(0, 120)));
 
@@ -279,6 +283,37 @@ export class SessionDO {
       }
     }
     return json({ ok: true });
+  }
+
+  // ---------- Listener: translate the Japanese station PA to the user's language ----------
+  // The PA content is the scenario (staged, like the track's examples); the
+  // TRANSLATION is a real Gemini call, in whatever language the user speaks.
+  async runListener(s) {
+    if (!this.env.GEMINI_API_KEY) return;
+    const lang = s.user.language || "en";
+    const pa = [
+      "地震が発生しました。落ち着いて行動してください。",
+      "東口は閉鎖されています。西口へ避難してください。",
+      "エレベーターは点検のため停止中です。段差のない西通路をご利用ください。",
+    ];
+    await this.logAgent("Listener", "active", "Station PA detected — translating with Gemini Live Translate");
+    const res = await fetch(`${GEMINI_BASE}/models/gemini-3.5-flash:generateContent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": this.env.GEMINI_API_KEY },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text:
+          `Translate each Japanese emergency PA line to language code "${lang}". ` +
+          `Reply ONLY JSON: {"lines":[{"ja":string,"translated":string}]}.\n${pa.join("\n")}` }] }],
+        generationConfig: { responseMimeType: "application/json" },
+      }),
+    });
+    if (!res.ok) throw new Error(`listener ${res.status}`);
+    const parsed = parseJsonLoose(res.ok ? (await res.json()).candidates?.[0]?.content?.parts?.[0]?.text : "");
+    const lines = parsed?.lines || [];
+    const s2 = await this.situation();
+    for (const l of lines) s2.environment.push({ src: "PA", ja: l.ja, en: l.translated, t: new Date().toISOString() });
+    await this.state.storage.put("situation", s2);
+    await this.logAgent("Listener", "done", `Translated ${lines.length} PA announcements to ${lang.toUpperCase()}`);
   }
 
   // ---------- Scout: REAL Antigravity agent, running server-side from the Keeper ----------
