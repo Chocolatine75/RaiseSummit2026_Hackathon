@@ -1,12 +1,13 @@
-import { ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSituation } from '@/context/SituationContext';
+import { AlertBanner } from '@/components/AlertBanner';
+import { AgentsStrip } from '@/components/AgentsStrip';
+import { GuidanceCard } from '@/components/GuidanceCard';
+import { MicButton } from '@/components/MicButton';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { StatusStrip } from '@/components/StatusStrip';
-import { GuidanceCard } from '@/components/GuidanceCard';
-import { SituationInfo } from '@/components/SituationInfo';
-import { MicButton } from '@/components/MicButton';
-import { Colors, Fonts } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 
 export default function VoiceScreen() {
   const {
@@ -17,7 +18,7 @@ export default function VoiceScreen() {
     isProcessing,
     transcript,
     sessionId,
-    toggleOfflineMode,
+    onLongPressStatus,
     onMicPressIn,
     onMicPressOut,
     confirmGuidance,
@@ -33,6 +34,7 @@ export default function VoiceScreen() {
         isConnected={isConnected}
         isOfflineMode={isOfflineMode}
         lastSync={situation?.network.last_serialized_to_device ?? null}
+        onLongPress={onLongPressStatus}
       />
 
       <ScrollView
@@ -40,36 +42,24 @@ export default function VoiceScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
+        <AlertBanner alerts={situation?.active_alerts ?? []} />
+
         <GuidanceCard
           text={situation?.guidance.current_instruction_en ?? null}
           needsTap={situation?.guidance.needs_tap ?? false}
+          isOfflineSource={isOfflineMode}
           onConfirm={confirmGuidance}
         />
 
-        <SituationInfo situation={situation} />
+        <AgentsStrip isOnline={isConnected && !isOfflineMode} situation={situation} />
 
-        <View style={styles.micSection}>
-          <MicButton
-            isListening={isListening}
-            isProcessing={isProcessing}
-            transcript={transcript}
-            onPressIn={onMicPressIn}
-            onPressOut={onMicPressOut}
-          />
-        </View>
-
-        {/* Mode offline toggle — visible pour la démo */}
-        <View style={styles.offlineToggle}>
-          <Text style={styles.offlineLabel}>
-            {isOfflineMode ? '✈️  Mode avion (démo)' : '🌐  En ligne'}
-          </Text>
-          <Switch
-            value={isOfflineMode}
-            onValueChange={toggleOfflineMode}
-            trackColor={{ false: Colors.surfaceAlt, true: Colors.offline }}
-            thumbColor={Colors.textPrimary}
-          />
-        </View>
+        <MicButton
+          isListening={isListening}
+          isProcessing={isProcessing}
+          transcript={transcript}
+          onPressIn={onMicPressIn}
+          onPressOut={onMicPressOut}
+        />
       </ScrollView>
     </SafeAreaView>
   );
@@ -84,27 +74,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    paddingVertical: 20,
-    gap: 20,
-  },
-  micSection: {
-    alignItems: 'center',
-    paddingVertical: 16,
-  },
-  offlineToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginHorizontal: 16,
-    backgroundColor: Colors.surface,
-    padding: 14,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  offlineLabel: {
-    fontFamily: Fonts.mono,
-    fontSize: Fonts.size.sm,
-    color: Colors.textSecondary,
+    padding: Spacing.md,
+    gap: Spacing.sm + 2,
+    paddingBottom: Spacing.xl,
   },
 });

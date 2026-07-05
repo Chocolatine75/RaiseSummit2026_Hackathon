@@ -13,7 +13,7 @@ interface SituationContextValue {
   transcript: string;
   lastResponse: string;
   sessionId: string;
-  toggleOfflineMode: () => void;
+  onLongPressStatus: () => void;
   onMicPressIn: () => void;
   onMicPressOut: () => void;
   confirmGuidance: () => void;
@@ -139,7 +139,7 @@ export function SituationProvider({ children }: { children: React.ReactNode }) {
       transcript,
       lastResponse,
       sessionId: SESSION_ID,
-      toggleOfflineMode,
+      onLongPressStatus: toggleOfflineMode,
       onMicPressIn,
       onMicPressOut,
       confirmGuidance,
