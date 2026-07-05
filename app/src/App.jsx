@@ -49,6 +49,7 @@ export default function App() {
   const voiceRef = useRef({ unlocked: false });
   const wasOffRef = useRef(false);
   const wasQuakeRef = useRef(false);
+  const wasGuidedRef = useRef(false);
 
   useEffect(() => { const u = () => setTime(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })); u(); const i = setInterval(u, 1000); return () => clearInterval(i); }, []);
   useEffect(() => { localStorage.setItem("aegis_lang", lang); emit("set_language", { lang }); }, [lang]);
@@ -59,6 +60,14 @@ export default function App() {
     if (quake && !wasQuakeRef.current) { setShowAlert(true); setSheet("full"); setCard(0); }
     wasQuakeRef.current = quake;
   }, [quake]);
+  // Whenever guidance BECOMES active (from a quake OR any instruction the agents
+  // surface), auto-expand the sheet so the instruction is never hidden below the
+  // peek fold. This was the "guidance card looks blank" bug: guidance existed but
+  // the sheet stayed peeked and clipped it off-screen.
+  useEffect(() => {
+    if (g.current_instruction_en && !wasGuidedRef.current) { setSheet("full"); setCard(0); }
+    wasGuidedRef.current = !!g.current_instruction_en;
+  }, [g.current_instruction_en]);
   // cinematic handoff on offline edge — also warm the on-device Gemma so voice works offline
   useEffect(() => { if (offline && !wasOffRef.current) { setHandoff(true); setSheet("full"); initGemma(); } wasOffRef.current = offline; }, [offline]);
 
