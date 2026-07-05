@@ -3,6 +3,7 @@ import { useAegis } from "./hooks/useAegis";
 import MapView from "./components/MapView";
 import Icon from "./components/Icon";
 import Onboarding from "./components/Onboarding";
+import Landing from "./components/Landing";
 import OfflineHandoff from "./components/OfflineHandoff";
 import QuakeAlert from "./components/QuakeAlert";
 
@@ -13,6 +14,7 @@ const LANGS = [
 
 export default function App() {
   const { state, offline, emit, session, forceOffline, goOnline, regionPrep, ingestOffline } = useAegis();
+  const [entered, setEntered] = useState(() => localStorage.getItem("aegis_entered") === "1");
   const [onboarded, setOnboarded] = useState(() => localStorage.getItem("aegis_onboarded") === "1");
   const [lang, setLang] = useState(() => localStorage.getItem("aegis_lang") || "en");
   const [consent, setConsent] = useState(() => {
@@ -147,7 +149,15 @@ export default function App() {
     rec.onstart = () => setListening(true);
     rec.onend = () => setListening(false);
     rec.onerror = () => setListening(false);
-    rec.onresult = (e) => { const t = e.results[0]?.[0]?.transcript; if (t) { handleUserUtterance(t); } };
+    rec.onresult = (e) => {
+      const t = e.results[0]?.[0]?.transcript;
+      if (!t) return;
+      // OFFLINE: the small on-device model can't speak — mic only does speech→text.
+      // Drop the transcript into the composer so the user sees it and sends; Gemma
+      // replies in text. ONLINE: full voice — send straight through and speak back.
+      if (offline) setAsk(t);
+      else handleUserUtterance(t);
+    };
     recRef.current = rec;
     return () => {
       try { rec.stop(); } catch {}
@@ -238,6 +248,13 @@ export default function App() {
   const startSos = () => { setSos(true); };
   const active = quake || !!g.current_instruction_en;
 
+  if (!entered) {
+    return (
+      <div className="stage"><div className="phone"><div className="notch" />
+        <Landing onStart={() => { localStorage.setItem("aegis_entered", "1"); setEntered(true); }} />
+      </div></div>
+    );
+  }
   if (!onboarded) {
     return (
       <div className="stage"><div className="phone"><div className="notch" />
@@ -247,8 +264,8 @@ export default function App() {
     );
   }
 
-  const brandCls = offline ? "offline" : quake ? "emergency" : "";
-  const brandTxt = offline ? "On-device" : quake ? "Emergency" : "Monitoring";
+  const brandCls = offline ? "offline" : active ? "emergency" : "";
+  const brandTxt = offline ? "On-device" : active ? "Emergency" : "Monitoring";
 
   return (
     <div className="stage">
@@ -305,8 +322,8 @@ export default function App() {
                     <div className="grip" onClick={(e) => { e.stopPropagation(); setSheet(sheet === "full" ? "peek" : "full"); }} />
 
                     <div className="chip-row">
-                      <span className={`chip ${offline ? "amber" : quake ? "red" : "green"}`}>
-                        {offline ? <><Icon name="wifiOff" size={12} /> On-device</> : quake ? <><Icon name="warning" size={12} /> Emergency</> : <><Icon name="shieldCheck" size={12} /> All clear</>}
+                      <span className={`chip ${offline ? "amber" : active ? "red" : "green"}`}>
+                        {offline ? <><Icon name="wifiOff" size={12} /> On-device</> : active ? <><Icon name="warning" size={12} /> Emergency</> : <><Icon name="shieldCheck" size={12} /> All clear</>}
                       </span>
                       {state?.live_delta?.as_of && <span className="chip-age">updated {age(state.live_delta.as_of)} ago</span>}
                     </div>
@@ -315,14 +332,14 @@ export default function App() {
                       <>
                         <div className="idle-title">You're in {state?.user?.location?.station || "Tokyo"}.</div>
                         <div className="idle-sub">AEGIS is listening for earthquake early-warnings, station announcements and evacuation notices — in your language.</div>
-                        <div className="orb-wrap">
-                          <div className={`orb ${listening ? "listening" : ""}`} onClick={toggleMic}>
-                            {listening && <span className="ring" />}
-                            <span className="core"><Icon name="mic" size={26} /></span>
+                        {/* one seeded example so first-open shows the translate capability */}
+                        {!(state?.environment || []).length && (
+                          <div className="seed-example">
+                            <div className="seed-cap">Example · live translate</div>
+                            <div className="turn"><div className="bubble ja">構内アナウンス：まもなく電車が参ります</div><div className="bubble-label">Station JP</div></div>
+                            <div className="turn"><div className="bubble">Platform announcement: a train is arriving shortly</div><div className="bubble-label">Your language</div></div>
                           </div>
-                        </div>
-                        <div className="orb-label">{listening ? "Listening…" : "Tap to speak"}</div>
-                        <div className="orb-hint">Ask “where's the nearest shelter?” — it answers out loud.</div>
+                        )}
                       </>
                     ) : (
                       <GuidanceCards g={g} r={r} best={best} hospital={hospital} offline={offline} card={card} setCard={setCard} onConfirm={() => emit("user_tap")} />
@@ -333,21 +350,30 @@ export default function App() {
 
                     {active && <button className="sos" onClick={startSos}><Icon name="warning" size={18} /> I need help now</button>}
 
-                    {/* Ask AEGIS — online: real-time voice · offline: on-device text chat */}
+                    {/* Ask AEGIS.
+                        ONLINE  → real-time voice orb (speaks the answer) + optional text.
+                        OFFLINE → mic does speech→text only (small model can't talk); the
+                        answer comes back as text in the chat above. */}
                     {offline ? (
-                      <div className="composer">
-                        <input
-                          className="composer-input"
-                          type="text"
-                          placeholder={gemmaStatus === "ready" ? "Ask on-device — e.g. nearest shelter?" : "Ask on-device (Gemma warming up…)"}
-                          value={ask}
-                          onChange={(e) => setAsk(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter" && ask.trim()) { handleUserUtterance(ask); setAsk(""); } }}
-                        />
-                        <button className="composer-send" disabled={!ask.trim() || thinking} onClick={() => { if (ask.trim()) { handleUserUtterance(ask); setAsk(""); } }}>
-                          <Icon name={thinking ? "loader" : "arrowUp"} size={18} style={thinking ? { animation: "spin 1s linear infinite" } : undefined} />
-                        </button>
-                      </div>
+                      <>
+                        <div className="composer">
+                          <button className={`composer-mic ${listening ? "on" : ""}`} onClick={toggleMic} title="Speak your question">
+                            <Icon name="mic" size={18} />
+                          </button>
+                          <input
+                            className="composer-input"
+                            type="text"
+                            placeholder={listening ? "Listening — speak now…" : "Ask on-device — e.g. nearest shelter?"}
+                            value={ask}
+                            onChange={(e) => setAsk(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter" && ask.trim()) { handleUserUtterance(ask); setAsk(""); } }}
+                          />
+                          <button className="composer-send" disabled={!ask.trim() || thinking} onClick={() => { if (ask.trim()) { handleUserUtterance(ask); setAsk(""); } }}>
+                            <Icon name={thinking ? "loader" : "arrowUp"} size={18} style={thinking ? { animation: "spin 1s linear infinite" } : undefined} />
+                          </button>
+                        </div>
+                        <div className="composer-note"><Icon name="wifiOff" size={11} /> On-device · voice becomes text, AEGIS replies in text</div>
+                      </>
                     ) : (
                       <>
                         <div className="orb-wrap" style={{ margin: "16px 0 2px" }}>
@@ -356,7 +382,21 @@ export default function App() {
                             <span className="core" style={{ width: 46, height: 46 }}><Icon name="mic" size={20} /></span>
                           </div>
                         </div>
-                        <div className="orb-label">{listening ? "Listening — speak now" : "Tap to ask by voice"}</div>
+                        <div className="orb-label">{listening ? "Listening — speak now" : active ? "Tap to ask by voice" : "Tap to speak — it answers out loud"}</div>
+                        {/* alternative text chat online, if the user prefers typing */}
+                        <div className="composer" style={{ marginTop: 12 }}>
+                          <input
+                            className="composer-input"
+                            type="text"
+                            placeholder="…or type a question"
+                            value={ask}
+                            onChange={(e) => setAsk(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter" && ask.trim()) { handleUserUtterance(ask); setAsk(""); } }}
+                          />
+                          <button className="composer-send blue" disabled={!ask.trim()} onClick={() => { if (ask.trim()) { handleUserUtterance(ask); setAsk(""); } }}>
+                            <Icon name="arrowUp" size={18} />
+                          </button>
+                        </div>
                       </>
                     )}
 
@@ -489,13 +529,16 @@ function PackAgents({ state, offline, onOpen }) {
 }
 function AgentDrawer({ agent, state, onClose }) {
   const lines = [...(state?.agents || [])].filter((a) => a.agent === agent.id).slice(-6);
+  const emergencyActive = state?.event?.type === "earthquake" || !!state?.guidance?.current_instruction_en;
   return (
     <div className="drawer-scrim" onClick={onClose}>
       <div className="drawer" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-head"><div className="drawer-title"><Icon name={agent.icon} size={17} /> {agent.name}</div><button onClick={onClose}><Icon name="close" size={18} /></button></div>
         <div className="trace">
           {lines.length ? lines.map((l, i) => <div className="trace-line" key={i}><span className="dot" style={{ background: l.status === "error" ? "var(--red)" : l.status === "active" ? "var(--amber)" : "var(--green)" }} />{l.detail}</div>)
-            : <div className="trace-line"><span className="dot" style={{ background: "var(--ink-3)" }} />Idle — runs live during an emergency.</div>}
+            : emergencyActive
+              ? <div className="trace-line"><span className="dot" style={{ background: "var(--amber)" }} />Working — waiting for the first result…</div>
+              : <div className="trace-line"><span className="dot" style={{ background: "var(--ink-3)" }} />Idle — runs live during an emergency.</div>}
         </div>
       </div>
     </div>
